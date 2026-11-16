@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-teal-dark: #1C5456;
+    --color-teal-primary: #35907D;
+    --color-teal-medium: #33736A;
+    --color-teal-light: #4F9D89;
+    --color-teal-soft: #6BAE9D;
+
+    --color-orange-primary: #D77252;
+    --color-orange-light: #F08A6D;
+    --color-orange-dark: #CE5924;
+    --color-orange-soft: #FCB775;
+
+    --color-yellow-accent: #F9D059;
+
+    --color-cream-bg: #FDF5EB;
+    --color-cream-card: #FAEEE0;
+    --color-cream-border: #FBE6C9;
+    --color-cream-subtle: #F7D6A5;
+
+    --color-green-badge: #D1E6D9;
+    --color-green-success: #58904A;
+    --color-green-lime: #92B060;
+
+    --color-dark-green-text: #193F35;
+  }
+
+  body {
+    background-color: #FDF5EB;
+    color: #193F35;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  h1, h2, h3, h4, .font-heading {
+    font-family: 'Poppins', 'Plus Jakarta Sans', system-ui, sans-serif;
+  }
+}
+
+/* Custom scrollbars for clean healthcare dashboard */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #FAEEE0;
+}
+::-webkit-scrollbar-thumb {
+  background: #6BAE9D;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #35907D;
+}

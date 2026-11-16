@@ -1,0 +1,6 @@
+{
+  "name": "TEMAN TPT - UPTD Puskesmas Pauh",
+  "description": "Sistem Informasi Terintegrasi Pemantauan Pasien TB Aktif dan Kontak Erat - Terapi, Edukasi, Monitoring, dan Aksi Nyata TPT",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
