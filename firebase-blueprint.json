@@ -1,0 +1,331 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Akun petugas dan tenaga kesehatan UPTD Puskesmas Pauh yang terdaftar di TEMAN TPT dengan kontrol akses berbasis peran (RBAC).",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "email": { "type": "string", "format": "email", "maxLength": 160 },
+        "role": { "type": "string", "enum": ["super_admin", "admin_puskesmas", "petugas_tb", "nakes"] },
+        "roleLabel": { "type": "string", "maxLength": 100 },
+        "nip": { "type": "string", "maxLength": 40 },
+        "phone": { "type": "string", "maxLength": 32 },
+        "avatar": { "type": "string", "maxLength": 300 },
+        "isActive": { "type": "boolean" },
+        "mustChangePassword": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "faskesCode", "name", "email", "role", "isActive", "createdAt", "updatedAt"]
+    },
+    "IndexPatient": {
+      "title": "IndexPatient",
+      "description": "Data ringkas pasien TB aktif sebagai pasien indeks untuk pelacakan kontak erat dan pengingat kepatuhan.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "nomorRegisterSitb": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "sitbRecorded": { "type": "boolean" },
+        "sitbRecordedDate": { "type": "string", "maxLength": 32 },
+        "sitbRecordedBy": { "type": "string", "maxLength": 120 },
+        "nik": { "type": "string", "maxLength": 32 },
+        "noRekamMedis": { "type": "string", "maxLength": 50 },
+        "namaLengkap": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "jenisKelamin": { "type": "string", "enum": ["L", "P"] },
+        "tanggalLahir": { "type": "string", "maxLength": 32 },
+        "umur": { "type": "number" },
+        "alamat": { "type": "string", "maxLength": 300 },
+        "kelurahan": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "noWhatsApp": { "type": "string", "maxLength": 32 },
+        "namaPendamping": { "type": "string", "maxLength": 150 },
+        "hubunganPendamping": { "type": "string", "maxLength": 60 },
+        "noWhatsAppPendamping": { "type": "string", "maxLength": 32 },
+        "tanggalDiagnosis": { "type": "string", "maxLength": 32 },
+        "klasifikasi": { "type": "string", "enum": ["Paru", "Ekstraparu"] },
+        "lokasiAnatomi": { "type": "string", "maxLength": 150 },
+        "hasilBakteriologis": { "type": "string", "maxLength": 100 },
+        "tanggalMulaiOAT": { "type": "string", "maxLength": 32 },
+        "fasyankes": { "type": "string", "maxLength": 120 },
+        "petugasPenanggungJawab": { "type": "string", "maxLength": 120 },
+        "regimenOAT": { "type": "string", "maxLength": 120 },
+        "fasePengobatan": { "type": "string", "maxLength": 60 },
+        "statusPengobatan": { "type": "string", "maxLength": 60 },
+        "perkiraanSelesai": { "type": "string", "maxLength": 32 },
+        "komorbiditas": { "type": "array" },
+        "catatanKlinis": { "type": "string", "maxLength": 1000 },
+        "kepatuhanMinumObat": { "type": "string", "maxLength": 60 },
+        "jadwalAmbilObatBerikutnya": { "type": "string", "maxLength": 32 },
+        "jadwalAmbilObatTerakhir": { "type": "string", "maxLength": 32 },
+        "sisaObatHari": { "type": "number" },
+        "pernahTerlambat": { "type": "boolean" },
+        "jumlahKeterlambatan": { "type": "number" },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "nomorRegisterSitb", "sitbRecorded", "namaLengkap", "jenisKelamin", "kelurahan", "statusPengobatan", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "CloseContact": {
+      "title": "CloseContact",
+      "description": "Data kontak erat pasien TB atau penerima TPT lama tanpa pasien indeks.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "patientId": { "type": "string", "maxLength": 128 },
+        "patientName": { "type": "string", "maxLength": 150 },
+        "sumberData": { "type": "string", "enum": ["input_langsung", "impor_data_lama", "impor_sitb"] },
+        "kategoriSasaranTPT": { "type": "string", "maxLength": 80 },
+        "legacyTptStatus": { "type": "string", "maxLength": 80 },
+        "dataSkriningTidakTersedia": { "type": "boolean" },
+        "sitbRecorded": { "type": "boolean" },
+        "sitbRecordedDate": { "type": "string", "maxLength": 32 },
+        "sitbRecordedBy": { "type": "string", "maxLength": 120 },
+        "namaLengkap": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "nik": { "type": "string", "maxLength": 32 },
+        "tanggalLahir": { "type": "string", "maxLength": 32 },
+        "umur": { "type": "number" },
+        "jenisKelamin": { "type": "string", "enum": ["L", "P"] },
+        "hubunganDenganPasien": { "type": "string", "maxLength": 60 },
+        "alamat": { "type": "string", "maxLength": 300 },
+        "kelurahan": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "noWhatsApp": { "type": "string", "maxLength": 32 },
+        "status": { "type": "string", "maxLength": 80 },
+        "sudahDiskrining": { "type": "boolean" },
+        "tanggalSkrining": { "type": "string", "maxLength": 32 },
+        "petugasSkrining": { "type": "string", "maxLength": 120 },
+        "gejalaBatuk": { "type": "boolean" },
+        "gejalaDemam": { "type": "boolean" },
+        "gejalaKeringatMalam": { "type": "boolean" },
+        "gejalaBeratBadanTurun": { "type": "boolean" },
+        "gejalaLainnya": { "type": "string", "maxLength": 300 },
+        "riwayatTB": { "type": "boolean" },
+        "riwayatKontakTB": { "type": "boolean" },
+        "penilaianSkrining": { "type": "string", "maxLength": 100 },
+        "pemeriksaanLanjutanDiperlukan": { "type": "boolean" },
+        "jenisPemeriksaanLanjutan": { "type": "string", "maxLength": 80 },
+        "tanggalPemeriksaanLanjutan": { "type": "string", "maxLength": 32 },
+        "hasilPemeriksaanLanjutan": { "type": "string", "maxLength": 100 },
+        "statusDiagnosisTB": { "type": "string", "maxLength": 60 },
+        "memenuhiKriteriaTPT": { "type": "boolean" },
+        "alasanKelayakanTPT": { "type": "string", "maxLength": 300 },
+        "keputusanTenagaKesehatan": { "type": "string", "maxLength": 80 },
+        "catatanKeputusanNakes": { "type": "string", "maxLength": 600 },
+        "nakesPenentu": { "type": "string", "maxLength": 120 },
+        "tanggalMulaiTPT": { "type": "string", "maxLength": 32 },
+        "regimenTPT": { "type": "string", "maxLength": 80 },
+        "jadwalKontrolBerikutnya": { "type": "string", "maxLength": 32 },
+        "kepatuhanTPT": { "type": "string", "maxLength": 50 },
+        "efekSampingTPT": { "type": "string", "maxLength": 300 },
+        "tanggalSelesaiTPT": { "type": "string", "maxLength": 32 },
+        "statusAkhirTPT": { "type": "string", "maxLength": 60 },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "namaLengkap", "umur", "jenisKelamin", "kelurahan", "status", "sudahDiskrining", "memenuhiKriteriaTPT", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "MedicationPickup": {
+      "title": "MedicationPickup",
+      "description": "Jadwal dan realisasi pengambilan obat OAT pasien TB aktif.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "patientId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "patientName": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "tanggalJadwal": { "type": "string", "maxLength": 32 },
+        "tanggalRealisasi": { "type": "string", "maxLength": 32 },
+        "jumlahObatHari": { "type": "number" },
+        "namaObat": { "type": "string", "maxLength": 150 },
+        "status": { "type": "string", "enum": ["Tepat Waktu", "Terlambat", "Belum Diambil", "Tidak Hadir"] },
+        "petugas": { "type": "string", "maxLength": 120 },
+        "keluhanPasien": { "type": "string", "maxLength": 400 },
+        "efekSamping": { "type": "string", "maxLength": 400 },
+        "catatan": { "type": "string", "maxLength": 500 },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "patientId", "patientName", "tanggalJadwal", "jumlahObatHari", "namaObat", "status", "petugas", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "PatientFollowup": {
+      "title": "PatientFollowup",
+      "description": "Catatan pemantauan klinis dan kepatuhan bulanan pasien TB aktif.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "patientId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "patientName": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "tanggalFollowup": { "type": "string", "maxLength": 32 },
+        "bulanPengobatanKe": { "type": "number" },
+        "beratBadanKg": { "type": "number" },
+        "kepatuhan": { "type": "string", "enum": ["Sangat Patuh", "Cukup", "Tidak Patuh"] },
+        "keluhan": { "type": "string", "maxLength": 400 },
+        "efekSampingOAT": { "type": "string", "maxLength": 400 },
+        "hasilPemeriksaanDahak": { "type": "string", "maxLength": 60 },
+        "edukasiDiberikan": { "type": "string", "maxLength": 400 },
+        "statusKunjungan": { "type": "string", "maxLength": 60 },
+        "petugas": { "type": "string", "maxLength": 120 },
+        "rencanaTindakLanjut": { "type": "string", "maxLength": 400 },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "patientId", "patientName", "tanggalFollowup", "bulanPengobatanKe", "beratBadanKg", "kepatuhan", "statusKunjungan", "petugas", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "HomeVisit": {
+      "title": "HomeVisit",
+      "description": "Jadwal dan hasil kunjungan rumah investigasi kontak atau pelacakan mangkir.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "targetType": { "type": "string", "enum": ["Pasien TB", "Kontak Erat"] },
+        "targetId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetName": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "alamat": { "type": "string", "maxLength": 300 },
+        "kelurahan": { "type": "string", "maxLength": 80 },
+        "tanggalKunjungan": { "type": "string", "maxLength": 32 },
+        "petugas": { "type": "string", "maxLength": 120 },
+        "tujuan": { "type": "string", "maxLength": 120 },
+        "hasilKunjungan": { "type": "string", "maxLength": 500 },
+        "edukasiDiberikan": { "type": "string", "maxLength": 500 },
+        "kendalaLapang": { "type": "string", "maxLength": 400 },
+        "rencanaTindakLanjut": { "type": "string", "maxLength": 400 },
+        "status": { "type": "string", "enum": ["Selesai", "Dijadwalkan", "Perlu Kunjungan Ulang"] },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "targetType", "targetId", "targetName", "kelurahan", "tanggalKunjungan", "petugas", "tujuan", "status", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "WhatsAppMessage": {
+      "title": "WhatsAppMessage",
+      "description": "Riwayat dan antrean pesan pengingat WhatsApp Business API resmi dengan perlindungan privasi.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "receiverType": { "type": "string", "enum": ["Pasien TB", "Kontak Erat", "Keluarga Pendamping"] },
+        "receiverName": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "noWhatsApp": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "templateType": { "type": "string", "maxLength": 80 },
+        "pesanTeks": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "statusKirim": { "type": "string", "enum": ["Terkirim", "Gagal", "Terjadwal", "Dibaca"] },
+        "waktuKirim": { "type": "string", "maxLength": 64 },
+        "petugas": { "type": "string", "maxLength": 120 },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "receiverType", "receiverName", "noWhatsApp", "templateType", "pesanTeks", "statusKirim", "waktuKirim", "petugas", "createdByUid", "createdAt"]
+    },
+    "ImportLog": {
+      "title": "ImportLog",
+      "description": "Riwayat impor Excel/CSV dari SITB atau data TPT lama.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userRole": { "type": "string", "maxLength": 100 },
+        "fileName": { "type": "string", "maxLength": 255 },
+        "totalRows": { "type": "number" },
+        "insertedCount": { "type": "number" },
+        "updatedCount": { "type": "number" },
+        "skippedCount": { "type": "number" },
+        "errorCount": { "type": "number" },
+        "notes": { "type": "string", "maxLength": 500 },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "timestamp", "userName", "userRole", "fileName", "totalRows", "insertedCount", "updatedCount", "skippedCount", "errorCount", "createdByUid", "createdAt"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "Jejak audit permanen (append-only): siapa, kapan, dan aksi apa yang dilakukan.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "timestamp": { "type": "string", "maxLength": 64 },
+        "userName": { "type": "string", "maxLength": 120 },
+        "userRole": { "type": "string", "maxLength": 100 },
+        "action": { "type": "string", "minLength": 1, "maxLength": 150 },
+        "details": { "type": "string", "maxLength": 600 },
+        "createdByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "timestamp", "userName", "userRole", "action", "details", "createdByUid", "createdAt"]
+    },
+    "SystemSetting": {
+      "title": "SystemSetting",
+      "description": "Pengaturan profil Puskesmas Pauh dan konfigurasi pengingat non-rahasia.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "faskesCode": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "namaFaskes": { "type": "string", "maxLength": 150 },
+        "alamat": { "type": "string", "maxLength": 300 },
+        "noTelp": { "type": "string", "maxLength": 40 },
+        "email": { "type": "string", "maxLength": 120 },
+        "waPhoneNumberId": { "type": "string", "maxLength": 80 },
+        "waBusinessAccountId": { "type": "string", "maxLength": 80 },
+        "autoReminderHMinus1": { "type": "boolean" },
+        "autoReminderOverdue": { "type": "boolean" },
+        "updatedByUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "faskesCode", "namaFaskes", "autoReminderHMinus1", "autoReminderOverdue", "updatedByUid", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Profil pengguna dan peran RBAC (users/{uid}.role) dengan isActive."
+    },
+    "/indexPatients/{patientId}": {
+      "schema": { "$ref": "#/entities/IndexPatient" },
+      "description": "Koleksi pasien TB aktif."
+    },
+    "/closeContacts/{contactId}": {
+      "schema": { "$ref": "#/entities/CloseContact" },
+      "description": "Koleksi kontak erat dan data penerima TPT lama."
+    },
+    "/medicationPickups/{pickupId}": {
+      "schema": { "$ref": "#/entities/MedicationPickup" },
+      "description": "Jadwal pengambilan obat OAT."
+    },
+    "/patientFollowups/{followupId}": {
+      "schema": { "$ref": "#/entities/PatientFollowup" },
+      "description": "Riwayat follow-up bulanan pasien TB."
+    },
+    "/homeVisits/{visitId}": {
+      "schema": { "$ref": "#/entities/HomeVisit" },
+      "description": "Catatan kunjungan rumah petugas."
+    },
+    "/whatsappMessages/{messageId}": {
+      "schema": { "$ref": "#/entities/WhatsAppMessage" },
+      "description": "Log pengiriman pesan pengingat WhatsApp resmi."
+    },
+    "/importLogs/{logId}": {
+      "schema": { "$ref": "#/entities/ImportLog" },
+      "description": "Log audit riwayat impor file SITB/data lama."
+    },
+    "/activityLogs/{logId}": {
+      "schema": { "$ref": "#/entities/ActivityLog" },
+      "description": "Log aktivitas sistem (hanya boleh ditambah, tidak boleh diubah/dihapus)."
+    },
+    "/systemSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/SystemSetting" },
+      "description": "Pengaturan instansi Puskesmas Pauh."
+    }
+  }
+}

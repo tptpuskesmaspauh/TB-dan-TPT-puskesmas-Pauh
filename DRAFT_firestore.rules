@@ -1,0 +1,704 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny All)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // PHASE 3: GLOBAL PRIMITIVES & RBAC HELPERS
+    // =========================================================================
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedSuperAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'tpt.puskesmaspauh@gmail.com';
+    }
+
+    function userExists() {
+      return exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isActiveStaff() {
+      return isVerifiedUser()
+        && userExists()
+        && userDoc().isActive == true
+        && userDoc().role in ['super_admin', 'admin_puskesmas', 'petugas_tb', 'nakes'];
+    }
+
+    function isSuperAdmin() {
+      return isBootstrappedSuperAdmin() || (isActiveStaff() && userDoc().role == 'super_admin');
+    }
+
+    function isAdminPuskesmas() {
+      return isActiveStaff() && userDoc().role in ['super_admin', 'admin_puskesmas'];
+    }
+
+    function isPetugasOrAdmin() {
+      return isActiveStaff() && userDoc().role in ['super_admin', 'admin_puskesmas', 'petugas_tb'];
+    }
+
+    function isNakesOrSuperAdmin() {
+      return isActiveStaff() && userDoc().role in ['super_admin', 'nakes'];
+    }
+
+    function isOptString(data, key, maxLen) {
+      return !(key in data) || data[key] == null || (data[key] is string && data[key].size() <= maxLen);
+    }
+
+    function isOptBool(data, key) {
+      return !(key in data) || data[key] == null || data[key] is bool;
+    }
+
+    function isOptNumber(data, key) {
+      return !(key in data) || data[key] == null || (data[key] is int || data[key] is float);
+    }
+
+    // =========================================================================
+    // VALIDATION BLUEPRINTS (Anti-Update-Gap)
+    // =========================================================================
+    function isValidUserProfile(data, docId) {
+      return data.keys().hasAll(['uid', 'faskesCode', 'name', 'email', 'role', 'isActive', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly([
+          'uid', 'faskesCode', 'name', 'email', 'role', 'roleLabel', 'nip',
+          'phone', 'avatar', 'isActive', 'mustChangePassword', 'createdBy',
+          'createdAt', 'updatedAt'
+        ])
+        && data.uid is string && data.uid == docId && isValidId(data.uid)
+        && data.faskesCode is string && data.faskesCode == 'P137107'
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.role in ['super_admin', 'admin_puskesmas', 'petugas_tb', 'nakes']
+        && data.isActive is bool
+        && isOptString(data, 'roleLabel', 100)
+        && isOptString(data, 'nip', 40)
+        && isOptString(data, 'phone', 32)
+        && isOptString(data, 'avatar', 300)
+        && isOptBool(data, 'mustChangePassword')
+        && isOptString(data, 'createdBy', 128)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidIndexPatient(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'nomorRegisterSitb', 'sitbRecorded', 'namaLengkap',
+          'jenisKelamin', 'kelurahan', 'statusPengobatan', 'createdByUid',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'nomorRegisterSitb', 'sitbRecorded', 'sitbRecordedDate',
+          'sitbRecordedBy', 'nik', 'noRekamMedis', 'namaLengkap', 'jenisKelamin',
+          'tanggalLahir', 'umur', 'alamat', 'kelurahan', 'noWhatsApp',
+          'namaPendamping', 'hubunganPendamping', 'noWhatsAppPendamping',
+          'tanggalDiagnosis', 'klasifikasi', 'lokasiAnatomi', 'hasilBakteriologis',
+          'tanggalMulaiOAT', 'fasyankes', 'petugasPenanggungJawab', 'regimenOAT',
+          'fasePengobatan', 'statusPengobatan', 'perkiraanSelesai', 'komorbiditas',
+          'catatanKlinis', 'kepatuhanMinumObat', 'jadwalAmbilObatBerikutnya',
+          'jadwalAmbilObatTerakhir', 'sisaObatHari', 'pernahTerlambat',
+          'jumlahKeterlambatan', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode is string && data.faskesCode == 'P137107'
+        && data.nomorRegisterSitb is string && data.nomorRegisterSitb.size() >= 1 && data.nomorRegisterSitb.size() <= 80
+        && data.sitbRecorded is bool
+        && data.namaLengkap is string && data.namaLengkap.size() >= 1 && data.namaLengkap.size() <= 150
+        && data.jenisKelamin in ['L', 'P']
+        && data.kelurahan is string && data.kelurahan.size() >= 1 && data.kelurahan.size() <= 80
+        && data.statusPengobatan is string && data.statusPengobatan.size() >= 1 && data.statusPengobatan.size() <= 60
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && isOptString(data, 'sitbRecordedDate', 32)
+        && isOptString(data, 'sitbRecordedBy', 120)
+        && isOptString(data, 'nik', 32)
+        && isOptString(data, 'noRekamMedis', 50)
+        && isOptString(data, 'tanggalLahir', 32)
+        && isOptNumber(data, 'umur')
+        && isOptString(data, 'alamat', 300)
+        && isOptString(data, 'noWhatsApp', 32)
+        && isOptString(data, 'namaPendamping', 150)
+        && isOptString(data, 'hubunganPendamping', 60)
+        && isOptString(data, 'noWhatsAppPendamping', 32)
+        && isOptString(data, 'tanggalDiagnosis', 32)
+        && isOptString(data, 'klasifikasi', 30)
+        && isOptString(data, 'lokasiAnatomi', 150)
+        && isOptString(data, 'hasilBakteriologis', 100)
+        && isOptString(data, 'tanggalMulaiOAT', 32)
+        && isOptString(data, 'fasyankes', 120)
+        && isOptString(data, 'petugasPenanggungJawab', 120)
+        && isOptString(data, 'regimenOAT', 120)
+        && isOptString(data, 'fasePengobatan', 60)
+        && isOptString(data, 'perkiraanSelesai', 32)
+        && (!('komorbiditas' in data) || (data.komorbiditas is list && data.komorbiditas.size() <= 20 && (data.komorbiditas.size() == 0 || data.komorbiditas[0] is string)))
+        && isOptString(data, 'catatanKlinis', 1000)
+        && isOptString(data, 'kepatuhanMinumObat', 60)
+        && isOptString(data, 'jadwalAmbilObatBerikutnya', 32)
+        && isOptString(data, 'jadwalAmbilObatTerakhir', 32)
+        && isOptNumber(data, 'sisaObatHari')
+        && isOptBool(data, 'pernahTerlambat')
+        && isOptNumber(data, 'jumlahKeterlambatan')
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidCloseContact(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'namaLengkap', 'umur', 'jenisKelamin',
+          'kelurahan', 'status', 'sudahDiskrining', 'memenuhiKriteriaTPT',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'patientId', 'patientName', 'sumberData',
+          'kategoriSasaranTPT', 'legacyTptStatus', 'dataSkriningTidakTersedia',
+          'sitbRecorded', 'sitbRecordedDate', 'sitbRecordedBy', 'namaLengkap',
+          'nik', 'tanggalLahir', 'umur', 'jenisKelamin', 'hubunganDenganPasien',
+          'alamat', 'kelurahan', 'noWhatsApp', 'status', 'sudahDiskrining',
+          'tanggalSkrining', 'petugasSkrining', 'gejalaBatuk', 'gejalaDemam',
+          'gejalaKeringatMalam', 'gejalaBeratBadanTurun', 'gejalaLainnya',
+          'riwayatTB', 'riwayatKontakTB', 'penilaianSkrining',
+          'pemeriksaanLanjutanDiperlukan', 'jenisPemeriksaanLanjutan',
+          'tanggalPemeriksaanLanjutan', 'hasilPemeriksaanLanjutan',
+          'statusDiagnosisTB', 'memenuhiKriteriaTPT', 'alasanKelayakanTPT',
+          'keputusanTenagaKesehatan', 'catatanKeputusanNakes', 'nakesPenentu',
+          'tanggalMulaiTPT', 'regimenTPT', 'jadwalKontrolBerikutnya',
+          'kepatuhanTPT', 'efekSampingTPT', 'tanggalSelesaiTPT',
+          'statusAkhirTPT', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode is string && data.faskesCode == 'P137107'
+        && isOptString(data, 'patientId', 128)
+        && isOptString(data, 'patientName', 150)
+        && isOptString(data, 'sumberData', 40)
+        && isOptString(data, 'kategoriSasaranTPT', 80)
+        && isOptString(data, 'legacyTptStatus', 80)
+        && isOptBool(data, 'dataSkriningTidakTersedia')
+        && isOptBool(data, 'sitbRecorded')
+        && isOptString(data, 'sitbRecordedDate', 32)
+        && isOptString(data, 'sitbRecordedBy', 120)
+        && data.namaLengkap is string && data.namaLengkap.size() >= 1 && data.namaLengkap.size() <= 150
+        && isOptString(data, 'nik', 32)
+        && isOptString(data, 'tanggalLahir', 32)
+        && (data.umur is int || data.umur is float) && data.umur >= 0 && data.umur <= 130
+        && data.jenisKelamin in ['L', 'P']
+        && isOptString(data, 'hubunganDenganPasien', 60)
+        && isOptString(data, 'alamat', 300)
+        && data.kelurahan is string && data.kelurahan.size() >= 1 && data.kelurahan.size() <= 80
+        && isOptString(data, 'noWhatsApp', 32)
+        && data.status is string && data.status.size() >= 1 && data.status.size() <= 80
+        && data.sudahDiskrining is bool
+        && isOptString(data, 'tanggalSkrining', 32)
+        && isOptString(data, 'petugasSkrining', 120)
+        && isOptBool(data, 'gejalaBatuk')
+        && isOptBool(data, 'gejalaDemam')
+        && isOptBool(data, 'gejalaKeringatMalam')
+        && isOptBool(data, 'gejalaBeratBadanTurun')
+        && isOptString(data, 'gejalaLainnya', 300)
+        && isOptBool(data, 'riwayatTB')
+        && isOptBool(data, 'riwayatKontakTB')
+        && isOptString(data, 'penilaianSkrining', 100)
+        && isOptBool(data, 'pemeriksaanLanjutanDiperlukan')
+        && isOptString(data, 'jenisPemeriksaanLanjutan', 80)
+        && isOptString(data, 'tanggalPemeriksaanLanjutan', 32)
+        && isOptString(data, 'hasilPemeriksaanLanjutan', 100)
+        && isOptString(data, 'statusDiagnosisTB', 60)
+        && data.memenuhiKriteriaTPT is bool
+        && isOptString(data, 'alasanKelayakanTPT', 300)
+        && isOptString(data, 'keputusanTenagaKesehatan', 80)
+        && isOptString(data, 'catatanKeputusanNakes', 600)
+        && isOptString(data, 'nakesPenentu', 120)
+        && isOptString(data, 'tanggalMulaiTPT', 32)
+        && isOptString(data, 'regimenTPT', 80)
+        && isOptString(data, 'jadwalKontrolBerikutnya', 32)
+        && isOptString(data, 'kepatuhanTPT', 50)
+        && isOptString(data, 'efekSampingTPT', 300)
+        && isOptString(data, 'tanggalSelesaiTPT', 32)
+        && isOptString(data, 'statusAkhirTPT', 60)
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidMedicationPickup(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'patientId', 'patientName', 'tanggalJadwal',
+          'jumlahObatHari', 'namaObat', 'status', 'petugas', 'createdByUid',
+          'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'patientId', 'patientName', 'tanggalJadwal',
+          'tanggalRealisasi', 'jumlahObatHari', 'namaObat', 'status',
+          'petugas', 'keluhanPasien', 'efekSamping', 'catatan',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode == 'P137107'
+        && data.patientId is string && isValidId(data.patientId)
+        && data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 150
+        && data.tanggalJadwal is string && data.tanggalJadwal.size() <= 32
+        && isOptString(data, 'tanggalRealisasi', 32)
+        && (data.jumlahObatHari is int || data.jumlahObatHari is float)
+        && data.namaObat is string && data.namaObat.size() >= 1 && data.namaObat.size() <= 150
+        && data.status in ['Tepat Waktu', 'Terlambat', 'Belum Diambil', 'Tidak Hadir']
+        && data.petugas is string && data.petugas.size() >= 1 && data.petugas.size() <= 120
+        && isOptString(data, 'keluhanPasien', 400)
+        && isOptString(data, 'efekSamping', 400)
+        && isOptString(data, 'catatan', 500)
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidPatientFollowup(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'patientId', 'patientName', 'tanggalFollowup',
+          'bulanPengobatanKe', 'beratBadanKg', 'kepatuhan', 'statusKunjungan',
+          'petugas', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'patientId', 'patientName', 'tanggalFollowup',
+          'bulanPengobatanKe', 'beratBadanKg', 'kepatuhan', 'keluhan',
+          'efekSampingOAT', 'hasilPemeriksaanDahak', 'edukasiDiberikan',
+          'statusKunjungan', 'petugas', 'rencanaTindakLanjut',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode == 'P137107'
+        && data.patientId is string && isValidId(data.patientId)
+        && data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 150
+        && data.tanggalFollowup is string && data.tanggalFollowup.size() <= 32
+        && (data.bulanPengobatanKe is int || data.bulanPengobatanKe is float)
+        && (data.beratBadanKg is int || data.beratBadanKg is float)
+        && data.kepatuhan in ['Sangat Patuh', 'Cukup', 'Tidak Patuh']
+        && isOptString(data, 'keluhan', 400)
+        && isOptString(data, 'efekSampingOAT', 400)
+        && isOptString(data, 'hasilPemeriksaanDahak', 60)
+        && isOptString(data, 'edukasiDiberikan', 400)
+        && data.statusKunjungan is string && data.statusKunjungan.size() <= 60
+        && data.petugas is string && data.petugas.size() <= 120
+        && isOptString(data, 'rencanaTindakLanjut', 400)
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidHomeVisit(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'targetType', 'targetId', 'targetName',
+          'kelurahan', 'tanggalKunjungan', 'petugas', 'tujuan', 'status',
+          'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'targetType', 'targetId', 'targetName',
+          'alamat', 'kelurahan', 'tanggalKunjungan', 'petugas', 'tujuan',
+          'hasilKunjungan', 'edukasiDiberikan', 'kendalaLapang',
+          'rencanaTindakLanjut', 'status', 'createdByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode == 'P137107'
+        && data.targetType in ['Pasien TB', 'Kontak Erat']
+        && data.targetId is string && isValidId(data.targetId)
+        && data.targetName is string && data.targetName.size() >= 1 && data.targetName.size() <= 150
+        && isOptString(data, 'alamat', 300)
+        && data.kelurahan is string && data.kelurahan.size() >= 1 && data.kelurahan.size() <= 80
+        && data.tanggalKunjungan is string && data.tanggalKunjungan.size() <= 32
+        && data.petugas is string && data.petugas.size() >= 1 && data.petugas.size() <= 120
+        && data.tujuan is string && data.tujuan.size() >= 1 && data.tujuan.size() <= 120
+        && isOptString(data, 'hasilKunjungan', 500)
+        && isOptString(data, 'edukasiDiberikan', 500)
+        && isOptString(data, 'kendalaLapang', 400)
+        && isOptString(data, 'rencanaTindakLanjut', 400)
+        && data.status in ['Selesai', 'Dijadwalkan', 'Perlu Kunjungan Ulang']
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidWhatsAppMessage(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'receiverType', 'receiverName', 'noWhatsApp',
+          'templateType', 'pesanTeks', 'statusKirim', 'waktuKirim', 'petugas',
+          'createdByUid', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'receiverType', 'receiverName', 'noWhatsApp',
+          'templateType', 'pesanTeks', 'statusKirim', 'waktuKirim', 'petugas',
+          'createdByUid', 'createdAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode == 'P137107'
+        && data.receiverType in ['Pasien TB', 'Kontak Erat', 'Keluarga Pendamping']
+        && data.receiverName is string && data.receiverName.size() >= 1 && data.receiverName.size() <= 150
+        && data.noWhatsApp is string && data.noWhatsApp.size() >= 1 && data.noWhatsApp.size() <= 32
+        && data.templateType is string && data.templateType.size() >= 1 && data.templateType.size() <= 80
+        && data.pesanTeks is string && data.pesanTeks.size() >= 1 && data.pesanTeks.size() <= 1000
+        && data.statusKirim in ['Terkirim', 'Gagal', 'Terjadwal', 'Dibaca']
+        && data.waktuKirim is string && data.waktuKirim.size() <= 64
+        && data.petugas is string && data.petugas.size() >= 1 && data.petugas.size() <= 120
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidImportLog(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'timestamp', 'userName', 'userRole', 'fileName',
+          'totalRows', 'insertedCount', 'updatedCount', 'skippedCount',
+          'errorCount', 'createdByUid', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'timestamp', 'userName', 'userRole', 'fileName',
+          'totalRows', 'insertedCount', 'updatedCount', 'skippedCount',
+          'errorCount', 'notes', 'createdByUid', 'createdAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode == 'P137107'
+        && data.timestamp is string && data.timestamp.size() <= 64
+        && data.userName is string && data.userName.size() <= 120
+        && data.userRole is string && data.userRole.size() <= 100
+        && data.fileName is string && data.fileName.size() <= 255
+        && (data.totalRows is int || data.totalRows is float)
+        && (data.insertedCount is int || data.insertedCount is float)
+        && (data.updatedCount is int || data.updatedCount is float)
+        && (data.skippedCount is int || data.skippedCount is float)
+        && (data.errorCount is int || data.errorCount is float)
+        && isOptString(data, 'notes', 500)
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidActivityLog(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'timestamp', 'userName', 'userRole', 'action',
+          'details', 'createdByUid', 'createdAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'timestamp', 'userName', 'userRole', 'action',
+          'details', 'createdByUid', 'createdAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode == 'P137107'
+        && data.timestamp is string && data.timestamp.size() <= 64
+        && data.userName is string && data.userName.size() <= 120
+        && data.userRole is string && data.userRole.size() <= 100
+        && data.action is string && data.action.size() >= 1 && data.action.size() <= 150
+        && data.details is string && data.details.size() <= 600
+        && data.createdByUid is string && data.createdByUid.size() >= 1 && data.createdByUid.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSystemSetting(data, docId) {
+      return data.keys().hasAll([
+          'id', 'faskesCode', 'namaFaskes', 'autoReminderHMinus1',
+          'autoReminderOverdue', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'id', 'faskesCode', 'namaFaskes', 'alamat', 'noTelp', 'email',
+          'waPhoneNumberId', 'waBusinessAccountId', 'autoReminderHMinus1',
+          'autoReminderOverdue', 'updatedByUid', 'createdAt', 'updatedAt'
+        ])
+        && data.id is string && data.id == docId && isValidId(data.id)
+        && data.faskesCode == 'P137107'
+        && data.namaFaskes is string && data.namaFaskes.size() >= 1 && data.namaFaskes.size() <= 150
+        && isOptString(data, 'alamat', 300)
+        && isOptString(data, 'noTelp', 40)
+        && isOptString(data, 'email', 120)
+        && isOptString(data, 'waPhoneNumberId', 80)
+        && isOptString(data, 'waBusinessAccountId', 80)
+        && data.autoReminderHMinus1 is bool
+        && data.autoReminderOverdue is bool
+        && data.updatedByUid is string && data.updatedByUid.size() >= 1 && data.updatedByUid.size() <= 128
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // =========================================================================
+    // COLLECTION MATCH BLOCKS
+    // =========================================================================
+
+    // 1. Users & RBAC (PII Isolated: non-admins can only read own profile)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isVerifiedUser() && (request.auth.uid == userId || isAdminPuskesmas() || isSuperAdmin());
+      allow list: if isAdminPuskesmas() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(userId)
+        && isVerifiedUser()
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin()
+          || (request.auth.uid == userId && isBootstrappedSuperAdmin() && incoming().role == 'super_admin' && incoming().isActive == true)
+        );
+      allow update: if isValidId(userId)
+        && isVerifiedUser()
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().faskesCode == existing().faskesCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          (isSuperAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'role', 'roleLabel', 'nip', 'phone', 'avatar', 'isActive', 'mustChangePassword', 'updatedAt']))
+          || (request.auth.uid == userId && isActiveStaff() && incoming().role == existing().role && incoming().isActive == existing().isActive && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'phone', 'avatar', 'mustChangePassword', 'updatedAt']) && (!('mustChangePassword' in incoming().diff(existing()).affectedKeys()) || incoming().mustChangePassword == false))
+        );
+      allow delete: if isValidId(userId) && isSuperAdmin() && request.auth.uid != userId;
+    }
+
+    // 2. Index Patients (TB Aktif)
+    match /indexPatients/{patientId} {
+      allow get: if isValidId(patientId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(patientId)
+        && isPetugasOrAdmin()
+        && isValidIndexPatient(incoming(), patientId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(patientId)
+        && isValidIndexPatient(incoming(), patientId)
+        && incoming().id == existing().id
+        && incoming().faskesCode == existing().faskesCode
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isSuperAdmin()
+          || (isPetugasOrAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'nomorRegisterSitb', 'sitbRecorded', 'sitbRecordedDate', 'sitbRecordedBy',
+            'nik', 'noRekamMedis', 'namaLengkap', 'jenisKelamin', 'tanggalLahir',
+            'umur', 'alamat', 'kelurahan', 'noWhatsApp', 'namaPendamping',
+            'hubunganPendamping', 'noWhatsAppPendamping', 'tanggalDiagnosis',
+            'klasifikasi', 'lokasiAnatomi', 'hasilBakteriologis', 'tanggalMulaiOAT',
+            'fasyankes', 'petugasPenanggungJawab', 'regimenOAT', 'fasePengobatan',
+            'statusPengobatan', 'perkiraanSelesai', 'komorbiditas', 'catatanKlinis',
+            'kepatuhanMinumObat', 'jadwalAmbilObatBerikutnya', 'jadwalAmbilObatTerakhir',
+            'sisaObatHari', 'pernahTerlambat', 'jumlahKeterlambatan', 'updatedAt'
+          ]))
+        );
+      allow delete: if isValidId(patientId) && isAdminPuskesmas();
+    }
+
+    // 3. Close Contacts & Legacy TPT Recipients (Strict Nakes-only TPT Decision)
+    match /closeContacts/{contactId} {
+      allow get: if isValidId(contactId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(contactId)
+        && isActiveStaff()
+        && isValidCloseContact(incoming(), contactId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          !('patientId' in incoming())
+          || incoming().patientId == null
+          || incoming().patientId == ''
+          || exists(/databases/$(database)/documents/indexPatients/$(incoming().patientId))
+        )
+        && (isNakesOrSuperAdmin() || (
+          incoming().memenuhiKriteriaTPT == false
+          && (!('keputusanTenagaKesehatan' in incoming()) || incoming().keputusanTenagaKesehatan == null || incoming().keputusanTenagaKesehatan == 'Belum Ada Keputusan')
+          && (!('nakesPenentu' in incoming()) || incoming().nakesPenentu == null || incoming().nakesPenentu == '')
+        ));
+      allow update: if isValidId(contactId)
+        && isValidCloseContact(incoming(), contactId)
+        && incoming().id == existing().id
+        && incoming().faskesCode == existing().faskesCode
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action A: Clinical TPT Eligibility Decision (Strictly Nakes or Super Admin)
+          (isNakesOrSuperAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'keputusanTenagaKesehatan', 'catatanKeputusanNakes', 'nakesPenentu',
+            'memenuhiKriteriaTPT', 'alasanKelayakanTPT', 'regimenTPT',
+            'tanggalMulaiTPT', 'jadwalKontrolBerikutnya', 'kepatuhanTPT',
+            'efekSampingTPT', 'tanggalSelesaiTPT', 'statusAkhirTPT', 'status', 'updatedAt'
+          ]))
+          // Action B: General Contact, Screening, Link Patient, Merge, or SITB Flag (Cannot touch TPT medical decision fields)
+          || (isActiveStaff() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'patientId', 'patientName', 'sumberData', 'kategoriSasaranTPT',
+            'legacyTptStatus', 'dataSkriningTidakTersedia', 'sitbRecorded',
+            'sitbRecordedDate', 'sitbRecordedBy', 'namaLengkap', 'nik',
+            'tanggalLahir', 'umur', 'jenisKelamin', 'hubunganDenganPasien',
+            'alamat', 'kelurahan', 'noWhatsApp', 'status', 'sudahDiskrining',
+            'tanggalSkrining', 'petugasSkrining', 'gejalaBatuk', 'gejalaDemam',
+            'gejalaKeringatMalam', 'gejalaBeratBadanTurun', 'gejalaLainnya',
+            'riwayatTB', 'riwayatKontakTB', 'penilaianSkrining',
+            'pemeriksaanLanjutanDiperlukan', 'jenisPemeriksaanLanjutan',
+            'tanggalPemeriksaanLanjutan', 'hasilPemeriksaanLanjutan',
+            'statusDiagnosisTB', 'tanggalMulaiTPT', 'regimenTPT',
+            'jadwalKontrolBerikutnya', 'kepatuhanTPT', 'efekSampingTPT',
+            'tanggalSelesaiTPT', 'statusAkhirTPT', 'updatedAt'
+          ]) && incoming().memenuhiKriteriaTPT == existing().memenuhiKriteriaTPT)
+          // Action C: Super Admin full correction
+          || isSuperAdmin()
+        );
+      allow delete: if isValidId(contactId) && isAdminPuskesmas();
+    }
+
+    // 4. Medication Pickups
+    match /medicationPickups/{pickupId} {
+      allow get: if isValidId(pickupId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(pickupId)
+        && isActiveStaff()
+        && isValidMedicationPickup(incoming(), pickupId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/indexPatients/$(incoming().patientId));
+      allow update: if isValidId(pickupId)
+        && isActiveStaff()
+        && isValidMedicationPickup(incoming(), pickupId)
+        && incoming().id == existing().id
+        && incoming().faskesCode == existing().faskesCode
+        && incoming().patientId == existing().patientId
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'tanggalRealisasi', 'petugas', 'keluhanPasien',
+          'efekSamping', 'catatan', 'tanggalJadwal', 'jumlahObatHari',
+          'namaObat', 'updatedAt'
+        ]);
+      allow delete: if isValidId(pickupId) && isAdminPuskesmas();
+    }
+
+    // 5. Patient Followups
+    match /patientFollowups/{followupId} {
+      allow get: if isValidId(followupId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(followupId)
+        && isActiveStaff()
+        && isValidPatientFollowup(incoming(), followupId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/indexPatients/$(incoming().patientId));
+      allow update: if isValidId(followupId)
+        && isActiveStaff()
+        && isValidPatientFollowup(incoming(), followupId)
+        && incoming().id == existing().id
+        && incoming().faskesCode == existing().faskesCode
+        && incoming().patientId == existing().patientId
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'tanggalFollowup', 'bulanPengobatanKe', 'beratBadanKg', 'kepatuhan',
+          'keluhan', 'efekSampingOAT', 'hasilPemeriksaanDahak', 'edukasiDiberikan',
+          'statusKunjungan', 'petugas', 'rencanaTindakLanjut', 'updatedAt'
+        ]);
+      allow delete: if isValidId(followupId) && isAdminPuskesmas();
+    }
+
+    // 6. Home Visits
+    match /homeVisits/{visitId} {
+      allow get: if isValidId(visitId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(visitId)
+        && isActiveStaff()
+        && isValidHomeVisit(incoming(), visitId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(visitId)
+        && isActiveStaff()
+        && isValidHomeVisit(incoming(), visitId)
+        && incoming().id == existing().id
+        && incoming().faskesCode == existing().faskesCode
+        && incoming().createdByUid == existing().createdByUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'alamat', 'kelurahan', 'tanggalKunjungan', 'petugas', 'tujuan',
+          'hasilKunjungan', 'edukasiDiberikan', 'kendalaLapang',
+          'rencanaTindakLanjut', 'status', 'updatedAt'
+        ]);
+      allow delete: if isValidId(visitId) && isAdminPuskesmas();
+    }
+
+    // 7. WhatsApp Messages (Only Petugas TB, Admin Puskesmas, Super Admin)
+    match /whatsappMessages/{messageId} {
+      allow get: if isValidId(messageId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(messageId)
+        && isPetugasOrAdmin()
+        && isValidWhatsAppMessage(incoming(), messageId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(messageId) && isSuperAdmin();
+    }
+
+    // 8. Import Logs (Append-only for Petugas/Admin)
+    match /importLogs/{logId} {
+      allow get: if isValidId(logId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(logId)
+        && isPetugasOrAdmin()
+        && isValidImportLog(incoming(), logId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // 9. Activity Audit Logs (STRICTLY APPEND-ONLY: Never update or delete)
+    match /activityLogs/{logId} {
+      allow get: if isValidId(logId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(logId)
+        && isActiveStaff()
+        && isValidActivityLog(incoming(), logId)
+        && incoming().createdByUid == request.auth.uid
+        && incoming().createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // 10. System Settings
+    match /systemSettings/{settingId} {
+      allow get: if isValidId(settingId) && isActiveStaff();
+      allow list: if isActiveStaff() && existing().faskesCode == 'P137107';
+      allow create: if isValidId(settingId)
+        && isAdminPuskesmas()
+        && isValidSystemSetting(incoming(), settingId)
+        && incoming().updatedByUid == request.auth.uid
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(settingId)
+        && isAdminPuskesmas()
+        && isValidSystemSetting(incoming(), settingId)
+        && incoming().id == existing().id
+        && incoming().faskesCode == existing().faskesCode
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().updatedByUid == request.auth.uid
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'namaFaskes', 'alamat', 'noTelp', 'email', 'waPhoneNumberId',
+          'waBusinessAccountId', 'autoReminderHMinus1', 'autoReminderOverdue',
+          'updatedByUid', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+  }
+}

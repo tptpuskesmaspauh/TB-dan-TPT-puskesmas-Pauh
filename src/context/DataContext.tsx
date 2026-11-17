@@ -1,32 +1,65 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  IndexPatient, 
-  CloseContact, 
-  MedicationPickup, 
-  PatientFollowup, 
-  HomeVisit, 
-  WhatsAppMessage, 
-  ActivityLog, 
-  UserAccount, 
+import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import {
+  signInWithEmailAndPassword,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  sendEmailVerification,
+  updatePassword,
+  createUserWithEmailAndPassword,
+  User as FirebaseUser
+} from 'firebase/auth';
+import {
+  collection,
+  doc,
+  getDoc,
+  setDoc,
+  updateDoc,
+  deleteDoc,
+  onSnapshot,
+  query,
+  where,
+  writeBatch,
+  serverTimestamp
+} from 'firebase/firestore';
+import {
+  auth,
+  db,
+  googleProvider,
+  createSecondaryAuthApp,
+  FASKES_CODE,
+  BOOTSTRAP_SUPER_ADMIN_EMAIL,
+  OperationType,
+  handleFirestoreError,
+  sanitizeFirestorePayload,
+  normalizeFirestoreDoc
+} from '../firebase';
+import {
+  IndexPatient,
+  CloseContact,
+  MedicationPickup,
+  PatientFollowup,
+  HomeVisit,
+  WhatsAppMessage,
+  ActivityLog,
+  UserAccount,
   RoleType,
-  ScreeningStatus,
   ContactStatus,
   TPTRegimen,
   ImportLog
 } from '../types/tb';
-import { 
-  INITIAL_PATIENTS, 
-  INITIAL_CONTACTS, 
-  INITIAL_PICKUPS, 
-  INITIAL_FOLLOWUPS, 
-  INITIAL_HOME_VISITS, 
-  INITIAL_WA_MESSAGES, 
-  INITIAL_AUDIT_LOGS, 
-  INITIAL_USERS,
+import {
+  INITIAL_PATIENTS,
+  INITIAL_CONTACTS,
+  INITIAL_PICKUPS,
+  INITIAL_FOLLOWUPS,
+  INITIAL_HOME_VISITS,
+  INITIAL_WA_MESSAGES,
+  INITIAL_AUDIT_LOGS,
   INITIAL_IMPORT_LOGS
 } from '../data/dummyData';
 
-export type ActiveNavTab = 
+export type ActiveNavTab =
   | 'dashboard'
   | 'patients'
   | 'contacts'
@@ -40,17 +73,69 @@ export type ActiveNavTab =
   | 'users'
   | 'settings';
 
+export interface ClinicSystemSettings {
+  id: string;
+  faskesCode: string;
+  namaFaskes: string;
+  alamat: string;
+  noTelp: string;
+  email: string;
+  waPhoneNumberId: string;
+  waBusinessAccountId: string;
+  autoReminderHMinus1: boolean;
+  autoReminderOverdue: boolean;
+}
+
+const DEFAULT_SYSTEM_SETTINGS: ClinicSystemSettings = {
+  id: 'pauh_config',
+  faskesCode: FASKES_CODE,
+  namaFaskes: 'UPTD Puskesmas Pauh',
+  alamat: 'Jl. Dr. Moh. Hatta No. 1, Pauh, Kota Padang, Sumatera Barat',
+  noTelp: '(0751) 71234',
+  email: 'puskesmaspauh@padang.go.id',
+  waPhoneNumberId: '109823471829302',
+  waBusinessAccountId: '98172381293812',
+  autoReminderHMinus1: true,
+  autoReminderOverdue: true
+};
+
+const ROLE_LABELS: Record<RoleType, string> = {
+  super_admin: 'Super Admin / Kepala Puskesmas',
+  admin_puskesmas: 'Admin Puskesmas / Tata Usaha',
+  petugas_tb: 'Petugas Program TB',
+  nakes: 'Tenaga Kesehatan / Dokter Pemeriksa'
+};
+
+const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000; // 30 menit tidak aktif -> logout otomatis
+
 interface DataContextType {
   activeTab: ActiveNavTab;
   setActiveTab: (tab: ActiveNavTab) => void;
+  authLoading: boolean;
   isAuthenticated: boolean;
-  login: (user: UserAccount) => void;
-  logout: () => void;
+  authError: string | null;
+  clearAuthError: () => void;
+  unverifiedUserEmail: string | null;
+  sessionTimeoutNotice: string | null;
+  mustChangePassword: boolean;
+  loginWithEmail: (email: string, password: string) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
+  refreshEmailVerification: () => Promise<void>;
+  changeOwnPassword: (newPassword: string) => Promise<void>;
+  createStaffAccount: (payload: {
+    name: string;
+    email: string;
+    password: string;
+    role: RoleType;
+    nip?: string;
+    phone: string;
+  }) => Promise<{ ok: boolean; message: string }>;
+  updateStaffAccount: (uid: string, updates: { role?: RoleType; isActive?: boolean; name?: string; phone?: string; nip?: string }) => Promise<void>;
+  logout: () => Promise<void>;
   currentUser: UserAccount;
-  setCurrentUser: (user: UserAccount) => void;
-  switchRole: (role: RoleType) => void;
   users: UserAccount[];
-  
+
   // Data
   patients: IndexPatient[];
   contacts: CloseContact[];
@@ -60,9 +145,15 @@ interface DataContextType {
   whatsappMessages: WhatsAppMessage[];
   auditLogs: ActivityLog[];
   importLogs: ImportLog[];
+  systemSettings: ClinicSystemSettings;
+  saveSystemSettings: (updates: Partial<ClinicSystemSettings>) => Promise<void>;
+  isSeedingData: boolean;
 
   // Patient Actions
-  addPatient: (patient: Omit<IndexPatient, 'id' | 'createdAt' | 'updatedAt'>, initialContacts?: Omit<CloseContact, 'id' | 'patientId' | 'patientName' | 'createdAt' | 'updatedAt'>[]) => IndexPatient;
+  addPatient: (
+    patient: Omit<IndexPatient, 'id' | 'createdAt' | 'updatedAt'>,
+    initialContacts?: Omit<CloseContact, 'id' | 'patientId' | 'patientName' | 'createdAt' | 'updatedAt'>[]
+  ) => IndexPatient;
   updatePatient: (id: string, updates: Partial<IndexPatient>) => void;
   deletePatient: (id: string) => void;
   toggleSitbRecordedPatient: (id: string) => void;
@@ -135,7 +226,7 @@ interface DataContextType {
     tptStartedCount: number;
     tptCompletedCount: number;
   };
-  resetAllData: () => void;
+  resetAllData: () => Promise<void>;
 
   // Selected Items for Drawer/Modals
   selectedPatientId: string | null;
@@ -148,146 +239,745 @@ interface DataContextType {
   setSearchQuery: (q: string) => void;
 }
 
+const DEFAULT_EMPTY_USER: UserAccount = {
+  id: '',
+  name: 'Petugas Puskesmas',
+  email: '',
+  role: 'petugas_tb',
+  roleLabel: ROLE_LABELS.petugas_tb,
+  avatar: '',
+  nip: '',
+  phone: '',
+  isActive: false,
+  mustChangePassword: false,
+  faskesCode: FASKES_CODE
+};
+
 const DataContext = createContext<DataContextType | undefined>(undefined);
 
-const STORAGE_KEY_PREFIX = 'teman_tpt_pauh_';
+function formatWibTimestamp(date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')} WIB`;
+}
+
+function getNextSequentialId(prefix: string, existingIds: string[], extraOffset = 0): string {
+  let maxNum = 0;
+  for (const id of existingIds) {
+    if (id.startsWith(prefix)) {
+      const tail = Number(id.slice(prefix.length));
+      if (!Number.isNaN(tail) && tail > maxNum) {
+        maxNum = tail;
+      }
+    }
+  }
+  const next = maxNum + 1 + extraOffset;
+  return `${prefix}${String(next).padStart(3, '0')}`;
+}
+
+function mapFirebaseAuthError(err: unknown): string {
+  const code = (err as { code?: string })?.code || '';
+  const msg = err instanceof Error ? err.message : String(err);
+  if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found') {
+    return 'Email atau kata sandi salah. Periksa kembali kredensial Anda.';
+  }
+  if (code === 'auth/too-many-requests') {
+    return 'Terlalu banyak percobaan masuk gagal. Silakan tunggu beberapa menit lalu coba lagi.';
+  }
+  if (code === 'auth/operation-not-allowed') {
+    return 'Metode masuk Email/Kata Sandi belum diaktifkan di Firebase Console. Silakan aktifkan di Authentication -> Sign-in method atau masuk dengan Google.';
+  }
+  if (code === 'auth/popup-closed-by-user') {
+    return 'Jendela login Google ditutup sebelum selesai.';
+  }
+  if (code === 'auth/network-request-failed') {
+    return 'Gagal terhubung ke server autentikasi. Periksa koneksi internet Anda.';
+  }
+  return msg || 'Gagal masuk ke sistem.';
+}
 
 export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTab] = useState<ActiveNavTab>('dashboard');
-  const [users] = useState<UserAccount[]>(INITIAL_USERS);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'auth');
-    return saved !== null ? JSON.parse(saved) : true; // Default true so user can immediately browse or test login
-  });
-  const [currentUser, setCurrentUser] = useState<UserAccount>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'user');
-    return saved ? JSON.parse(saved) : INITIAL_USERS[1]; // default to Petugas TB
-  });
+  const [authLoading, setAuthLoading] = useState<boolean>(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [unverifiedUserEmail, setUnverifiedUserEmail] = useState<string | null>(null);
+  const [sessionTimeoutNotice, setSessionTimeoutNotice] = useState<string | null>(null);
+  const [mustChangePassword, setMustChangePassword] = useState<boolean>(false);
 
-  const login = (user: UserAccount) => {
-    setCurrentUser(user);
-    setIsAuthenticated(true);
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'auth', JSON.stringify(true));
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'user', JSON.stringify(user));
-  };
+  const [currentUser, setCurrentUser] = useState<UserAccount>(DEFAULT_EMPTY_USER);
+  const [users, setUsers] = useState<UserAccount[]>([]);
 
-  const logout = () => {
-    setIsAuthenticated(false);
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'auth', JSON.stringify(false));
-  };
-
-  const [patients, setPatients] = useState<IndexPatient[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'patients');
-    return saved ? JSON.parse(saved) : INITIAL_PATIENTS;
-  });
-
-  const [contacts, setContacts] = useState<CloseContact[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'contacts');
-    return saved ? JSON.parse(saved) : INITIAL_CONTACTS;
-  });
-
-  const [pickups, setPickups] = useState<MedicationPickup[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'pickups');
-    return saved ? JSON.parse(saved) : INITIAL_PICKUPS;
-  });
-
-  const [followups, setFollowups] = useState<PatientFollowup[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'followups');
-    return saved ? JSON.parse(saved) : INITIAL_FOLLOWUPS;
-  });
-
-  const [homeVisits, setHomeVisits] = useState<HomeVisit[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'home_visits');
-    return saved ? JSON.parse(saved) : INITIAL_HOME_VISITS;
-  });
-
-  const [whatsappMessages, setWhatsappMessages] = useState<WhatsAppMessage[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'wa_messages');
-    return saved ? JSON.parse(saved) : INITIAL_WA_MESSAGES;
-  });
-
-  const [auditLogs, setAuditLogs] = useState<ActivityLog[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'audit_logs');
-    return saved ? JSON.parse(saved) : INITIAL_AUDIT_LOGS;
-  });
-
-  const [importLogs, setImportLogs] = useState<ImportLog[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_PREFIX + 'import_logs');
-    return saved ? JSON.parse(saved) : INITIAL_IMPORT_LOGS;
-  });
+  const [patients, setPatients] = useState<IndexPatient[]>([]);
+  const [contacts, setContacts] = useState<CloseContact[]>([]);
+  const [pickups, setPickups] = useState<MedicationPickup[]>([]);
+  const [followups, setFollowups] = useState<PatientFollowup[]>([]);
+  const [homeVisits, setHomeVisits] = useState<HomeVisit[]>([]);
+  const [whatsappMessages, setWhatsappMessages] = useState<WhatsAppMessage[]>([]);
+  const [auditLogs, setAuditLogs] = useState<ActivityLog[]>([]);
+  const [importLogs, setImportLogs] = useState<ImportLog[]>([]);
+  const [systemSettings, setSystemSettings] = useState<ClinicSystemSettings>(DEFAULT_SYSTEM_SETTINGS);
+  const [isSeedingData, setIsSeedingData] = useState<boolean>(false);
 
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [selectedContactId, setSelectedContactId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
-  // Persist to localStorage
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'user', JSON.stringify(currentUser));
+  const unsubscribersRef = useRef<(() => void)[]>([]);
+  const seededCheckRef = useRef<boolean>(false);
+  const inactivityTimerRef = useRef<number | null>(null);
+
+  const clearSubscriptions = useCallback(() => {
+    unsubscribersRef.current.forEach((unsub) => {
+      try {
+        unsub();
+      } catch {
+        // Ignore unsubscribe error
+      }
+    });
+    unsubscribersRef.current = [];
+  }, []);
+
+  const writeAuditLog = useCallback(async (action: string, details: string, actor?: UserAccount) => {
+    const activeActor = actor || currentUser;
+    if (!auth.currentUser || !activeActor.id) return;
+    const logId = `LOG-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const payload = sanitizeFirestorePayload({
+      id: logId,
+      faskesCode: FASKES_CODE,
+      timestamp: formatWibTimestamp(),
+      userName: activeActor.name || 'Petugas',
+      userRole: activeActor.roleLabel || activeActor.role,
+      action,
+      details,
+      createdByUid: auth.currentUser.uid,
+      createdAt: serverTimestamp()
+    });
+    try {
+      await setDoc(doc(db, 'activityLogs', logId), payload);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.CREATE, `activityLogs/${logId}`);
+    }
   }, [currentUser]);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'patients', JSON.stringify(patients));
-  }, [patients]);
+  const seedDummyDataToFirestore = useCallback(async (uid: string, userName: string, userRoleLabel: string) => {
+    setIsSeedingData(true);
+    try {
+      // Step 1: Commit Index Patients FIRST so exists(/indexPatients/...) rules pass for related collections
+      const batchPatients = writeBatch(db);
+      for (const patient of INITIAL_PATIENTS) {
+        const patientPayload = sanitizeFirestorePayload({
+          ...patient,
+          faskesCode: FASKES_CODE,
+          createdByUid: uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        batchPatients.set(doc(db, 'indexPatients', patient.id), patientPayload);
+      }
+      await batchPatients.commit();
+
+      // Step 2: Commit Close Contacts, Pickups, Followups, Visits, WA, Logs, and System Settings
+      const batchSecondary = writeBatch(db);
+      for (const contact of INITIAL_CONTACTS) {
+        const contactPayload = sanitizeFirestorePayload({
+          ...contact,
+          faskesCode: FASKES_CODE,
+          createdByUid: uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        batchSecondary.set(doc(db, 'closeContacts', contact.id), contactPayload);
+      }
+      for (const pickup of INITIAL_PICKUPS) {
+        batchSecondary.set(
+          doc(db, 'medicationPickups', pickup.id),
+          sanitizeFirestorePayload({
+            ...pickup,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
+      }
+      for (const flp of INITIAL_FOLLOWUPS) {
+        batchSecondary.set(
+          doc(db, 'patientFollowups', flp.id),
+          sanitizeFirestorePayload({
+            ...flp,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
+      }
+      for (const visit of INITIAL_HOME_VISITS) {
+        batchSecondary.set(
+          doc(db, 'homeVisits', visit.id),
+          sanitizeFirestorePayload({
+            ...visit,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
+      }
+      for (const msg of INITIAL_WA_MESSAGES) {
+        batchSecondary.set(
+          doc(db, 'whatsappMessages', msg.id),
+          sanitizeFirestorePayload({
+            ...msg,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp()
+          })
+        );
+      }
+      for (const imp of INITIAL_IMPORT_LOGS) {
+        batchSecondary.set(
+          doc(db, 'importLogs', imp.id),
+          sanitizeFirestorePayload({
+            ...imp,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp()
+          })
+        );
+      }
+      for (const log of INITIAL_AUDIT_LOGS) {
+        batchSecondary.set(
+          doc(db, 'activityLogs', log.id),
+          sanitizeFirestorePayload({
+            ...log,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp()
+          })
+        );
+      }
+      batchSecondary.set(
+        doc(db, 'systemSettings', 'pauh_config'),
+        sanitizeFirestorePayload({
+          ...DEFAULT_SYSTEM_SETTINGS,
+          updatedByUid: uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        })
+      );
+      await batchSecondary.commit();
+
+      const seedLogId = `LOG-SEED-${Date.now()}`;
+      await setDoc(
+        doc(db, 'activityLogs', seedLogId),
+        sanitizeFirestorePayload({
+          id: seedLogId,
+          faskesCode: FASKES_CODE,
+          timestamp: formatWibTimestamp(),
+          userName,
+          userRole: userRoleLabel,
+          action: 'Inisialisasi Data Awal Firestore',
+          details: `Memuat data simulasi awal UPTD Puskesmas Pauh (${INITIAL_PATIENTS.length} pasien TB, ${INITIAL_CONTACTS.length} kontak erat/TPT lama).`,
+          createdByUid: uid,
+          createdAt: serverTimestamp()
+        })
+      );
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'batch_seed_dummy');
+    } finally {
+      setIsSeedingData(false);
+    }
+  }, []);
+
+  const attachFirestoreListeners = useCallback((userProfile: UserAccount) => {
+    clearSubscriptions();
+
+    const makeFaskesQuery = (colName: string) =>
+      query(collection(db, colName), where('faskesCode', '==', FASKES_CODE));
+
+    const unsubPatients = onSnapshot(
+      makeFaskesQuery('indexPatients'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<IndexPatient>(d.data()));
+        list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setPatients(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'indexPatients')
+    );
+
+    const unsubContacts = onSnapshot(
+      makeFaskesQuery('closeContacts'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<CloseContact>(d.data()));
+        list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+        setContacts(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'closeContacts')
+    );
+
+    const unsubPickups = onSnapshot(
+      makeFaskesQuery('medicationPickups'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<MedicationPickup>(d.data()));
+        setPickups(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'medicationPickups')
+    );
+
+    const unsubFollowups = onSnapshot(
+      makeFaskesQuery('patientFollowups'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<PatientFollowup>(d.data()));
+        list.sort((a, b) => (b.tanggalFollowup || '').localeCompare(a.tanggalFollowup || ''));
+        setFollowups(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'patientFollowups')
+    );
+
+    const unsubVisits = onSnapshot(
+      makeFaskesQuery('homeVisits'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<HomeVisit>(d.data()));
+        list.sort((a, b) => (b.tanggalKunjungan || '').localeCompare(a.tanggalKunjungan || ''));
+        setHomeVisits(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'homeVisits')
+    );
+
+    const unsubWa = onSnapshot(
+      makeFaskesQuery('whatsappMessages'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<WhatsAppMessage>(d.data()));
+        list.sort((a, b) => (b.waktuKirim || '').localeCompare(a.waktuKirim || ''));
+        setWhatsappMessages(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'whatsappMessages')
+    );
+
+    const unsubImportLogs = onSnapshot(
+      makeFaskesQuery('importLogs'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<ImportLog>(d.data()));
+        list.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        setImportLogs(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'importLogs')
+    );
+
+    const unsubActivityLogs = onSnapshot(
+      makeFaskesQuery('activityLogs'),
+      (snap) => {
+        const list = snap.docs.map((d) => normalizeFirestoreDoc<ActivityLog>(d.data()));
+        list.sort((a, b) => (b.timestamp || '').localeCompare(a.timestamp || ''));
+        setAuditLogs(list);
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'activityLogs')
+    );
+
+    const unsubSettings = onSnapshot(
+      makeFaskesQuery('systemSettings'),
+      (snap) => {
+        const configDoc = snap.docs.find((d) => d.id === 'pauh_config');
+        if (configDoc) {
+          setSystemSettings(normalizeFirestoreDoc<ClinicSystemSettings>(configDoc.data()));
+        }
+      },
+      (err) => handleFirestoreError(err, OperationType.LIST, 'systemSettings')
+    );
+
+    const list: (() => void)[] = [
+      unsubPatients,
+      unsubContacts,
+      unsubPickups,
+      unsubFollowups,
+      unsubVisits,
+      unsubWa,
+      unsubImportLogs,
+      unsubActivityLogs,
+      unsubSettings
+    ];
+
+    // PII Isolation: Only Admin Puskesmas / Super Admin can list all staff users
+    if (userProfile.role === 'super_admin' || userProfile.role === 'admin_puskesmas') {
+      const unsubUsers = onSnapshot(
+        makeFaskesQuery('users'),
+        (snap) => {
+          const staffList = snap.docs.map((d) => {
+            const raw = normalizeFirestoreDoc<Record<string, unknown>>(d.data());
+            return {
+              id: String(raw.uid || d.id),
+              name: String(raw.name || ''),
+              email: String(raw.email || ''),
+              role: (raw.role as RoleType) || 'petugas_tb',
+              roleLabel: String(raw.roleLabel || ROLE_LABELS[(raw.role as RoleType) || 'petugas_tb']),
+              avatar: String(raw.avatar || ''),
+              nip: raw.nip ? String(raw.nip) : undefined,
+              phone: String(raw.phone || ''),
+              isActive: Boolean(raw.isActive),
+              mustChangePassword: Boolean(raw.mustChangePassword),
+              faskesCode: String(raw.faskesCode || FASKES_CODE)
+            } as UserAccount;
+          });
+          setUsers(staffList);
+        },
+        (err) => handleFirestoreError(err, OperationType.LIST, 'users')
+      );
+      list.push(unsubUsers);
+    } else {
+      setUsers([userProfile]);
+    }
+
+    unsubscribersRef.current = list;
+  }, [clearSubscriptions]);
+
+  const verifyAndBootstrapUser = useCallback(async (firebaseUser: FirebaseUser) => {
+    setAuthError(null);
+    setUnverifiedUserEmail(null);
+
+    if (!firebaseUser.emailVerified) {
+      setUnverifiedUserEmail(firebaseUser.email || 'Email Anda');
+      setIsAuthenticated(false);
+      setAuthLoading(false);
+      return;
+    }
+
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    let userSnap;
+    try {
+      userSnap = await getDoc(userDocRef);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.GET, `users/${firebaseUser.uid}`);
+    }
+
+    let profile: UserAccount | null = null;
+
+    if (!userSnap.exists()) {
+      const emailLower = (firebaseUser.email || '').toLowerCase();
+      if (emailLower === BOOTSTRAP_SUPER_ADMIN_EMAIL) {
+        const newAdminDoc = sanitizeFirestorePayload({
+          uid: firebaseUser.uid,
+          faskesCode: FASKES_CODE,
+          name: firebaseUser.displayName || 'Super Admin Puskesmas Pauh',
+          email: firebaseUser.email || BOOTSTRAP_SUPER_ADMIN_EMAIL,
+          role: 'super_admin',
+          roleLabel: ROLE_LABELS.super_admin,
+          nip: '197804122005011002',
+          phone: '081267000101',
+          avatar: '',
+          isActive: true,
+          mustChangePassword: false,
+          createdBy: firebaseUser.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        try {
+          await setDoc(userDocRef, newAdminDoc);
+        } catch (error) {
+          handleFirestoreError(error, OperationType.CREATE, `users/${firebaseUser.uid}`);
+        }
+        profile = {
+          id: firebaseUser.uid,
+          name: String(newAdminDoc.name),
+          email: String(newAdminDoc.email),
+          role: 'super_admin',
+          roleLabel: ROLE_LABELS.super_admin,
+          avatar: '',
+          nip: '197804122005011002',
+          phone: '081267000101',
+          isActive: true,
+          mustChangePassword: false,
+          faskesCode: FASKES_CODE
+        };
+      } else {
+        await signOut(auth);
+        setIsAuthenticated(false);
+        setAuthError(
+          `Akun (${firebaseUser.email}) belum terdaftar di koleksi users Puskesmas Pauh. Hubungi Super Admin untuk mendaftarkan dan mengaktifkan akun Anda.`
+        );
+        setAuthLoading(false);
+        return;
+      }
+    } else {
+      const raw = normalizeFirestoreDoc<Record<string, unknown>>(userSnap.data());
+      if (raw.isActive !== true) {
+        await signOut(auth);
+        setIsAuthenticated(false);
+        setAuthError('Akun Anda berstatus nonaktif (isActive = false). Hubungi Super Admin UPTD Puskesmas Pauh.');
+        setAuthLoading(false);
+        return;
+      }
+      const role = (raw.role as RoleType) || 'petugas_tb';
+      profile = {
+        id: firebaseUser.uid,
+        name: String(raw.name || firebaseUser.displayName || 'Petugas TB'),
+        email: String(raw.email || firebaseUser.email || ''),
+        role,
+        roleLabel: String(raw.roleLabel || ROLE_LABELS[role]),
+        avatar: String(raw.avatar || ''),
+        nip: raw.nip ? String(raw.nip) : undefined,
+        phone: String(raw.phone || ''),
+        isActive: true,
+        mustChangePassword: Boolean(raw.mustChangePassword),
+        faskesCode: String(raw.faskesCode || FASKES_CODE)
+      };
+    }
+
+    setCurrentUser(profile);
+    setMustChangePassword(Boolean(profile.mustChangePassword));
+    setIsAuthenticated(true);
+    setSessionTimeoutNotice(null);
+    setAuthLoading(false);
+
+    attachFirestoreListeners(profile);
+    void writeAuditLog('Login Berhasil', `Masuk ke sistem TEMAN TPT sebagai ${profile.roleLabel}`, profile);
+
+    // First-time empty DB bootstrap by Super Admin / Admin Puskesmas
+    if (!seededCheckRef.current && (profile.role === 'super_admin' || profile.role === 'admin_puskesmas')) {
+      seededCheckRef.current = true;
+      try {
+        const configSnap = await getDoc(doc(db, 'systemSettings', 'pauh_config'));
+        if (!configSnap.exists()) {
+          await seedDummyDataToFirestore(firebaseUser.uid, profile.name, profile.roleLabel);
+        }
+      } catch {
+        // Ignore if already seeded or non-blocking
+      }
+    }
+  }, [attachFirestoreListeners, seedDummyDataToFirestore, writeAuditLog]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'contacts', JSON.stringify(contacts));
-  }, [contacts]);
+    const unsubscribe = onAuthStateChanged(auth, (fbUser) => {
+      if (!fbUser) {
+        clearSubscriptions();
+        setIsAuthenticated(false);
+        setCurrentUser(DEFAULT_EMPTY_USER);
+        setUsers([]);
+        setPatients([]);
+        setContacts([]);
+        setPickups([]);
+        setFollowups([]);
+        setHomeVisits([]);
+        setWhatsappMessages([]);
+        setAuditLogs([]);
+        setImportLogs([]);
+        setMustChangePassword(false);
+        setAuthLoading(false);
+        return;
+      }
+      void verifyAndBootstrapUser(fbUser);
+    });
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'pickups', JSON.stringify(pickups));
-  }, [pickups]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'followups', JSON.stringify(followups));
-  }, [followups]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'home_visits', JSON.stringify(homeVisits));
-  }, [homeVisits]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'wa_messages', JSON.stringify(whatsappMessages));
-  }, [whatsappMessages]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'audit_logs', JSON.stringify(auditLogs));
-  }, [auditLogs]);
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY_PREFIX + 'import_logs', JSON.stringify(importLogs));
-  }, [importLogs]);
-
-  // Log audit helper
-  const addAuditLog = (action: string, details: string) => {
-    const now = new Date();
-    const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
-    const newLog: ActivityLog = {
-      id: `LOG-${Date.now()}`,
-      timestamp: timeStr,
-      userName: currentUser.name,
-      userRole: currentUser.roleLabel,
-      action,
-      details
+    return () => {
+      unsubscribe();
+      clearSubscriptions();
     };
-    setAuditLogs(prev => [newLog, ...prev]);
-  };
+  }, [clearSubscriptions, verifyAndBootstrapUser]);
 
-  const switchRole = (role: RoleType) => {
-    const found = users.find(u => u.role === role);
-    if (found) {
-      setCurrentUser(found);
-      addAuditLog('Ganti Peran Akses', `Beralih ke hak akses ${found.roleLabel}`);
+  // 30-minute inactivity auto-logout
+  const logout = useCallback(async () => {
+    if (auth.currentUser && currentUser.id) {
+      try {
+        await writeAuditLog('Logout Sistem', `Pengguna ${currentUser.name} keluar dari sesi`);
+      } catch {
+        // Do not block logout if log fails
+      }
+    }
+    clearSubscriptions();
+    await signOut(auth);
+    setIsAuthenticated(false);
+  }, [clearSubscriptions, currentUser, writeAuditLog]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      if (inactivityTimerRef.current) {
+        window.clearTimeout(inactivityTimerRef.current);
+      }
+      return;
+    }
+
+    const resetTimer = () => {
+      if (inactivityTimerRef.current) {
+        window.clearTimeout(inactivityTimerRef.current);
+      }
+      inactivityTimerRef.current = window.setTimeout(() => {
+        setSessionTimeoutNotice('Sesi berakhir otomatis karena tidak ada aktivitas selama 30 menit demi keamanan data pasien.');
+        void logout();
+      }, INACTIVITY_TIMEOUT_MS);
+    };
+
+    const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    events.forEach((ev) => window.addEventListener(ev, resetTimer, { passive: true }));
+    resetTimer();
+
+    return () => {
+      if (inactivityTimerRef.current) {
+        window.clearTimeout(inactivityTimerRef.current);
+      }
+      events.forEach((ev) => window.removeEventListener(ev, resetTimer));
+    };
+  }, [isAuthenticated, logout]);
+
+  const loginWithEmail = async (email: string, password: string) => {
+    setAuthError(null);
+    setSessionTimeoutNotice(null);
+    try {
+      await signInWithEmailAndPassword(auth, email.trim(), password);
+    } catch (err) {
+      const friendly = mapFirebaseAuthError(err);
+      setAuthError(friendly);
+      throw new Error(friendly);
     }
   };
 
-  // Add Patient (One-to-many integration: can simultaneously register close contacts!)
+  const loginWithGoogle = async () => {
+    setAuthError(null);
+    setSessionTimeoutNotice(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (err) {
+      const friendly = mapFirebaseAuthError(err);
+      setAuthError(friendly);
+      throw new Error(friendly);
+    }
+  };
+
+  const resendVerificationEmail = async () => {
+    if (!auth.currentUser) return;
+    await sendEmailVerification(auth.currentUser);
+  };
+
+  const refreshEmailVerification = async () => {
+    if (!auth.currentUser) return;
+    await auth.currentUser.reload();
+    if (auth.currentUser.emailVerified) {
+      await verifyAndBootstrapUser(auth.currentUser);
+    } else {
+      setAuthError('Email masih belum terverifikasi. Silakan klik tautan verifikasi di kotak masuk email Anda terlebih dahulu.');
+    }
+  };
+
+  const changeOwnPassword = async (newPassword: string) => {
+    if (!auth.currentUser) throw new Error('Tidak ada sesi aktif.');
+    await updatePassword(auth.currentUser, newPassword);
+    try {
+      await updateDoc(doc(db, 'users', auth.currentUser.uid), {
+        mustChangePassword: false,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${auth.currentUser.uid}`);
+    }
+    setMustChangePassword(false);
+    void writeAuditLog('Ganti Kata Sandi', 'Pengguna memperbarui kata sandi akunnya.');
+  };
+
+  const createStaffAccount = async (payload: {
+    name: string;
+    email: string;
+    password: string;
+    role: RoleType;
+    nip?: string;
+    phone: string;
+  }): Promise<{ ok: boolean; message: string }> => {
+    if (!auth.currentUser || currentUser.role !== 'super_admin') {
+      return { ok: false, message: 'Hanya Super Admin yang berwenang membuat akun petugas baru.' };
+    }
+
+    const secondary = createSecondaryAuthApp();
+    try {
+      const cred = await createUserWithEmailAndPassword(secondary.auth, payload.email.trim(), payload.password);
+      await sendEmailVerification(cred.user);
+      const newUid = cred.user.uid;
+
+      const userDocPayload = sanitizeFirestorePayload({
+        uid: newUid,
+        faskesCode: FASKES_CODE,
+        name: payload.name.trim(),
+        email: payload.email.trim(),
+        role: payload.role,
+        roleLabel: ROLE_LABELS[payload.role],
+        nip: payload.nip?.trim() || '',
+        phone: payload.phone.trim(),
+        avatar: '',
+        isActive: true,
+        mustChangePassword: true,
+        createdBy: auth.currentUser.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      await setDoc(doc(db, 'users', newUid), userDocPayload);
+      await signOut(secondary.auth);
+      void writeAuditLog('Tambah Akun Petugas', `Super Admin membuat akun ${payload.name} (${ROLE_LABELS[payload.role]})`);
+      return {
+        ok: true,
+        message: `Akun ${payload.name} berhasil dibuat! Link verifikasi email telah dikirim ke ${payload.email}.`
+      };
+    } catch (err) {
+      return { ok: false, message: mapFirebaseAuthError(err) };
+    } finally {
+      await secondary.cleanup();
+    }
+  };
+
+  const updateStaffAccount = async (
+    uid: string,
+    updates: { role?: RoleType; isActive?: boolean; name?: string; phone?: string; nip?: string }
+  ) => {
+    const clean: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    if (updates.role !== undefined) {
+      clean.role = updates.role;
+      clean.roleLabel = ROLE_LABELS[updates.role];
+    }
+    if (updates.isActive !== undefined) clean.isActive = updates.isActive;
+    if (updates.name !== undefined) clean.name = updates.name;
+    if (updates.phone !== undefined) clean.phone = updates.phone;
+    if (updates.nip !== undefined) clean.nip = updates.nip;
+
+    try {
+      await updateDoc(doc(db, 'users', uid), sanitizeFirestorePayload(clean));
+      void writeAuditLog('Pembaruan Akun Petugas', `Memperbarui status/peran akun ${uid}`);
+    } catch (error) {
+      handleFirestoreError(error, OperationType.UPDATE, `users/${uid}`);
+    }
+  };
+
+  const saveSystemSettings = async (updates: Partial<ClinicSystemSettings>) => {
+    if (!auth.currentUser) return;
+    const merged: ClinicSystemSettings = {
+      ...systemSettings,
+      ...updates,
+      id: 'pauh_config',
+      faskesCode: FASKES_CODE
+    };
+    try {
+      await setDoc(
+        doc(db, 'systemSettings', 'pauh_config'),
+        sanitizeFirestorePayload({
+          ...merged,
+          updatedByUid: auth.currentUser.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }),
+        { merge: true }
+      );
+      void writeAuditLog('Perbarui Pengaturan Sistem', 'Menyimpan konfigurasi profil Puskesmas Pauh & pengingat WhatsApp');
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'systemSettings/pauh_config');
+    }
+  };
+
+  // ==================== PATIENT ACTIONS ====================
   const addPatient = (
     patientData: Omit<IndexPatient, 'id' | 'createdAt' | 'updatedAt'>,
     initialContactsData: Omit<CloseContact, 'id' | 'patientId' | 'patientName' | 'createdAt' | 'updatedAt'>[] = []
-  ) => {
-    const newIdNum = patients.length + 1;
-    const newId = `TB-PAUH-2026-${String(newIdNum).padStart(3, '0')}`;
+  ): IndexPatient => {
+    const newId = getNextSequentialId(
+      'TB-PAUH-2026-',
+      patients.map((p) => p.id)
+    );
     const nowIso = new Date().toISOString();
+    const uid = auth.currentUser?.uid || currentUser.id;
 
     const newPatient: IndexPatient = {
       ...patientData,
@@ -296,109 +986,217 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: nowIso
     };
 
-    setPatients(prev => [newPatient, ...prev]);
+    const persist = async () => {
+      try {
+        await setDoc(
+          doc(db, 'indexPatients', newId),
+          sanitizeFirestorePayload({
+            ...patientData,
+            id: newId,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
 
-    // Create connected close contacts
-    if (initialContactsData.length > 0) {
-      const createdContacts: CloseContact[] = initialContactsData.map((c, idx) => {
-        const contactId = `KE-PAUH-2026-${String(contacts.length + idx + 1).padStart(3, '0')}`;
-        return {
-          ...c,
-          id: contactId,
-          patientId: newId,
-          patientName: newPatient.namaLengkap,
-          createdAt: nowIso,
-          updatedAt: nowIso
-        };
-      });
-      setContacts(prev => [...createdContacts, ...prev]);
-    }
+        if (initialContactsData.length > 0) {
+          const batch = writeBatch(db);
+          initialContactsData.forEach((c, idx) => {
+            const contactId = getNextSequentialId(
+              'KE-PAUH-2026-',
+              contacts.map((item) => item.id),
+              idx
+            );
+            batch.set(
+              doc(db, 'closeContacts', contactId),
+              sanitizeFirestorePayload({
+                ...c,
+                id: contactId,
+                faskesCode: FASKES_CODE,
+                patientId: newId,
+                patientName: newPatient.namaLengkap,
+                memenuhiKriteriaTPT: false,
+                createdByUid: uid,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+              })
+            );
+          });
+          await batch.commit();
+        }
 
-    addAuditLog('Tambah Pasien TB Baru', `Mendaftarkan pasien ${newPatient.namaLengkap} (${newId}) dengan ${initialContactsData.length} kontak erat awal.`);
+        void writeAuditLog(
+          'Tambah Pasien TB Baru',
+          `Mendaftarkan pasien ${newPatient.namaLengkap} (${newId}) dengan ${initialContactsData.length} kontak erat awal.`
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `indexPatients/${newId}`);
+      }
+    };
+
+    void persist();
     return newPatient;
   };
 
   const updatePatient = (id: string, updates: Partial<IndexPatient>) => {
-    const nowIso = new Date().toISOString();
-    setPatients(prev => prev.map(p => {
-      if (p.id === id) {
-        const updated = { ...p, ...updates, updatedAt: nowIso };
-        addAuditLog('Pembaruan Data Pasien', `Memperbarui data pasien ${updated.namaLengkap} (${id})`);
-        return updated;
+    const allowedKeys = [
+      'nomorRegisterSitb', 'sitbRecorded', 'sitbRecordedDate', 'sitbRecordedBy',
+      'nik', 'noRekamMedis', 'namaLengkap', 'jenisKelamin', 'tanggalLahir',
+      'umur', 'alamat', 'kelurahan', 'noWhatsApp', 'namaPendamping',
+      'hubunganPendamping', 'noWhatsAppPendamping', 'tanggalDiagnosis',
+      'klasifikasi', 'lokasiAnatomi', 'hasilBakteriologis', 'tanggalMulaiOAT',
+      'fasyankes', 'petugasPenanggungJawab', 'regimenOAT', 'fasePengobatan',
+      'statusPengobatan', 'perkiraanSelesai', 'komorbiditas', 'catatanKlinis',
+      'kepatuhanMinumObat', 'jadwalAmbilObatBerikutnya', 'jadwalAmbilObatTerakhir',
+      'sisaObatHari', 'pernahTerlambat', 'jumlahKeterlambatan'
+    ];
+    const filtered: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    for (const k of allowedKeys) {
+      if (k in updates && (updates as Record<string, unknown>)[k] !== undefined) {
+        filtered[k] = (updates as Record<string, unknown>)[k];
       }
-      return p;
-    }));
+    }
+
+    const persist = async () => {
+      try {
+        await updateDoc(doc(db, 'indexPatients', id), sanitizeFirestorePayload(filtered));
+        const target = patients.find((p) => p.id === id);
+        void writeAuditLog('Pembaruan Data Pasien', `Memperbarui data pasien ${target?.namaLengkap || id} (${id})`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `indexPatients/${id}`);
+      }
+    };
+    void persist();
   };
 
   const deletePatient = (id: string) => {
-    const patient = patients.find(p => p.id === id);
-    if (patient) {
-      setPatients(prev => prev.filter(p => p.id !== id));
-      addAuditLog('Hapus Pasien TB', `Menghapus pasien ${patient.namaLengkap} (${id})`);
-    }
+    const target = patients.find((p) => p.id === id);
+    const persist = async () => {
+      try {
+        await deleteDoc(doc(db, 'indexPatients', id));
+        void writeAuditLog('Hapus Pasien TB', `Menghapus pasien ${target?.namaLengkap || id} (${id})`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `indexPatients/${id}`);
+      }
+    };
+    void persist();
   };
 
-  // Contact actions
-  const addContact = (contactData: Omit<CloseContact, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newId = `KE-PAUH-2026-${String(contacts.length + 1).padStart(3, '0')}`;
+  // ==================== CONTACT ACTIONS ====================
+  const addContact = (contactData: Omit<CloseContact, 'id' | 'createdAt' | 'updatedAt'>): CloseContact => {
+    const newId = getNextSequentialId(
+      'KE-PAUH-2026-',
+      contacts.map((c) => c.id)
+    );
     const nowIso = new Date().toISOString();
+    const uid = auth.currentUser?.uid || currentUser.id;
     const newContact: CloseContact = {
       ...contactData,
       sumberData: contactData.sumberData || 'input_langsung',
+      memenuhiKriteriaTPT: Boolean(contactData.memenuhiKriteriaTPT),
       id: newId,
       createdAt: nowIso,
       updatedAt: nowIso
     };
-    setContacts(prev => [newContact, ...prev]);
-    addAuditLog(
-      'Tambah Kontak Erat',
-      `Mendaftarkan kontak ${newContact.namaLengkap} (${newId})${newContact.patientName ? ` untuk pasien ${newContact.patientName}` : ' (belum terhubung pasien indeks)'}`
-    );
+
+    const persist = async () => {
+      try {
+        await setDoc(
+          doc(db, 'closeContacts', newId),
+          sanitizeFirestorePayload({
+            ...newContact,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
+        void writeAuditLog(
+          'Tambah Kontak Erat',
+          `Mendaftarkan kontak ${newContact.namaLengkap} (${newId})${newContact.patientName ? ` untuk pasien ${newContact.patientName}` : ' (belum terhubung pasien indeks)'}`
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `closeContacts/${newId}`);
+      }
+    };
+    void persist();
     return newContact;
   };
 
   const updateContact = (id: string, updates: Partial<CloseContact>) => {
-    const nowIso = new Date().toISOString();
-    setContacts(prev => prev.map(c => {
-      if (c.id === id) {
-        const updated = { ...c, ...updates, updatedAt: nowIso };
-        addAuditLog('Pembaruan Kontak Erat', `Memperbarui kontak ${updated.namaLengkap} (${id})`);
-        return updated;
+    const allowedKeys = [
+      'patientId', 'patientName', 'sumberData', 'kategoriSasaranTPT',
+      'legacyTptStatus', 'dataSkriningTidakTersedia', 'sitbRecorded',
+      'sitbRecordedDate', 'sitbRecordedBy', 'namaLengkap', 'nik',
+      'tanggalLahir', 'umur', 'jenisKelamin', 'hubunganDenganPasien',
+      'alamat', 'kelurahan', 'noWhatsApp', 'status', 'sudahDiskrining',
+      'tanggalSkrining', 'petugasSkrining', 'gejalaBatuk', 'gejalaDemam',
+      'gejalaKeringatMalam', 'gejalaBeratBadanTurun', 'gejalaLainnya',
+      'riwayatTB', 'riwayatKontakTB', 'penilaianSkrining',
+      'pemeriksaanLanjutanDiperlukan', 'jenisPemeriksaanLanjutan',
+      'tanggalPemeriksaanLanjutan', 'hasilPemeriksaanLanjutan',
+      'statusDiagnosisTB', 'memenuhiKriteriaTPT', 'alasanKelayakanTPT',
+      'keputusanTenagaKesehatan', 'catatanKeputusanNakes', 'nakesPenentu',
+      'tanggalMulaiTPT', 'regimenTPT', 'jadwalKontrolBerikutnya',
+      'kepatuhanTPT', 'efekSampingTPT', 'tanggalSelesaiTPT', 'statusAkhirTPT'
+    ];
+    const filtered: Record<string, unknown> = { updatedAt: serverTimestamp() };
+    for (const k of allowedKeys) {
+      if (k in updates && (updates as Record<string, unknown>)[k] !== undefined) {
+        filtered[k] = (updates as Record<string, unknown>)[k];
       }
-      return c;
-    }));
+    }
+
+    const persist = async () => {
+      try {
+        await updateDoc(doc(db, 'closeContacts', id), sanitizeFirestorePayload(filtered));
+        const target = contacts.find((c) => c.id === id);
+        void writeAuditLog('Pembaruan Kontak Erat', `Memperbarui kontak ${target?.namaLengkap || id} (${id})`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `closeContacts/${id}`);
+      }
+    };
+    void persist();
   };
 
   const deleteContact = (id: string) => {
-    const c = contacts.find(item => item.id === id);
-    if (c) {
-      setContacts(prev => prev.filter(item => item.id !== id));
-      addAuditLog('Hapus Kontak Erat', `Menghapus data kontak ${c.namaLengkap} (${id})`);
-    }
+    const target = contacts.find((c) => c.id === id);
+    const persist = async () => {
+      try {
+        await deleteDoc(doc(db, 'closeContacts', id));
+        void writeAuditLog('Hapus Kontak Erat', `Menghapus data kontak ${target?.namaLengkap || id} (${id})`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `closeContacts/${id}`);
+      }
+    };
+    void persist();
   };
 
-  // Save Screening
-  const saveScreening = (contactId: string, screeningData: {
-    gejalaBatuk: boolean;
-    gejalaDemam: boolean;
-    gejalaKeringatMalam: boolean;
-    gejalaBeratBadanTurun: boolean;
-    gejalaLainnya?: string;
-    riwayatTB: boolean;
-    riwayatKontakTB: boolean;
-    penilaianSkrining: 'Suspek TB (Bergejala)' | 'Tidak Bergejala (Kandidat Evaluasi TPT)';
-    petugasSkrining: string;
-  }) => {
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const isSymptomatic = screeningData.gejalaBatuk || screeningData.gejalaDemam || screeningData.gejalaKeringatMalam || screeningData.gejalaBeratBadanTurun;
-
-    let newStatus: ContactStatus = 'Sudah diskrining';
-    if (isSymptomatic) {
-      newStatus = 'Sedang menjalani pemeriksaan'; // Suspect needs sputum/TCM exam!
-    } else {
-      newStatus = 'Menunggu keputusan petugas'; // Non-symptomatic awaits Nakes TPT review!
+  const saveScreening = (
+    contactId: string,
+    screeningData: {
+      gejalaBatuk: boolean;
+      gejalaDemam: boolean;
+      gejalaKeringatMalam: boolean;
+      gejalaBeratBadanTurun: boolean;
+      gejalaLainnya?: string;
+      riwayatTB: boolean;
+      riwayatKontakTB: boolean;
+      penilaianSkrining: 'Suspek TB (Bergejala)' | 'Tidak Bergejala (Kandidat Evaluasi TPT)';
+      petugasSkrining: string;
     }
+  ) => {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const isSymptomatic =
+      screeningData.gejalaBatuk ||
+      screeningData.gejalaDemam ||
+      screeningData.gejalaKeringatMalam ||
+      screeningData.gejalaBeratBadanTurun;
+
+    const newStatus: ContactStatus = isSymptomatic
+      ? 'Sedang menjalani pemeriksaan'
+      : 'Menunggu keputusan petugas';
 
     updateContact(contactId, {
       sudahDiskrining: true,
@@ -411,22 +1209,23 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...screeningData
     });
 
-    addAuditLog('Skrining TB Selesai', `Menyelesaikan skrining kontak ${contactId}: ${screeningData.penilaianSkrining}`);
+    void writeAuditLog('Skrining TB Selesai', `Menyelesaikan skrining kontak ${contactId}: ${screeningData.penilaianSkrining}`);
   };
 
-  // Save TPT Decision by Healthcare Worker
-  const saveTptDecision = (contactId: string, decisionData: {
-    keputusanTenagaKesehatan: 'Layak Diberikan TPT' | 'Ditunda Karena Komorbid' | 'Tidak Layak (Ada Kontraindikasi)' | 'Menolak TPT';
-    catatanKeputusanNakes: string;
-    nakesPenentu: string;
-    memenuhiKriteriaTPT: boolean;
-    alasanKelayakanTPT?: string;
-    regimenTPT?: TPTRegimen;
-    mulaiSekarang?: boolean;
-    tanggalMulaiTPT?: string;
-  }) => {
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const saveTptDecision = (
+    contactId: string,
+    decisionData: {
+      keputusanTenagaKesehatan: 'Layak Diberikan TPT' | 'Ditunda Karena Komorbid' | 'Tidak Layak (Ada Kontraindikasi)' | 'Menolak TPT';
+      catatanKeputusanNakes: string;
+      nakesPenentu: string;
+      memenuhiKriteriaTPT: boolean;
+      alasanKelayakanTPT?: string;
+      regimenTPT?: TPTRegimen;
+      mulaiSekarang?: boolean;
+      tanggalMulaiTPT?: string;
+    }
+  ) => {
+    const todayStr = new Date().toISOString().slice(0, 10);
 
     let status: ContactStatus = 'Memenuhi kriteria TPT';
     if (decisionData.keputusanTenagaKesehatan === 'Tidak Layak (Ada Kontraindikasi)') {
@@ -437,135 +1236,209 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       status = 'TPT belum dimulai';
     }
 
-    updateContact(contactId, {
-      ...decisionData,
+    // IMPORTANT: Do NOT include mulaiSekarang in Firestore update (strict hasOnly check)
+    const updates: Partial<CloseContact> = {
+      keputusanTenagaKesehatan: decisionData.keputusanTenagaKesehatan,
+      catatanKeputusanNakes: decisionData.catatanKeputusanNakes,
+      nakesPenentu: decisionData.nakesPenentu,
+      memenuhiKriteriaTPT: decisionData.memenuhiKriteriaTPT,
+      alasanKelayakanTPT: decisionData.alasanKelayakanTPT,
+      regimenTPT: decisionData.regimenTPT,
       status,
       tanggalMulaiTPT: decisionData.mulaiSekarang ? (decisionData.tanggalMulaiTPT || todayStr) : undefined,
       statusAkhirTPT: decisionData.mulaiSekarang ? 'Masih Berlangsung' : undefined,
       kepatuhanTPT: decisionData.mulaiSekarang ? 'Patuh' : undefined
-    });
+    };
 
-    addAuditLog('Keputusan Medis TPT', `Dokter menetapkan status TPT kontak ${contactId}: ${decisionData.keputusanTenagaKesehatan}`);
+    updateContact(contactId, updates);
+    void writeAuditLog('Keputusan Medis TPT', `Tenaga Kesehatan menetapkan status TPT kontak ${contactId}: ${decisionData.keputusanTenagaKesehatan}`);
   };
 
-  // Medication Pickup actions
+  // ==================== PICKUPS, FOLLOWUPS, VISITS, WA ====================
   const recordPickup = (pickupId: string, notes?: string) => {
-    const now = new Date();
-    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-
-    setPickups(prev => prev.map(p => {
-      if (p.id === pickupId) {
-        const updated: MedicationPickup = {
-          ...p,
-          status: 'Tepat Waktu',
-          tanggalRealisasi: todayStr,
-          catatan: notes || p.catatan,
-          petugas: currentUser.name
-        };
-        addAuditLog('Pengambilan Obat Dicatat', `Realisasi ambil obat pasien ${p.patientName} (${pickupId})`);
-        return updated;
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const target = pickups.find((p) => p.id === pickupId);
+    const persist = async () => {
+      try {
+        await updateDoc(
+          doc(db, 'medicationPickups', pickupId),
+          sanitizeFirestorePayload({
+            status: 'Tepat Waktu',
+            tanggalRealisasi: todayStr,
+            catatan: notes || target?.catatan || '',
+            petugas: currentUser.name,
+            updatedAt: serverTimestamp()
+          })
+        );
+        void writeAuditLog('Pengambilan Obat Dicatat', `Realisasi ambil obat pasien ${target?.patientName || pickupId} (${pickupId})`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `medicationPickups/${pickupId}`);
       }
-      return p;
-    }));
+    };
+    void persist();
   };
 
   const addPickup = (pickupData: Omit<MedicationPickup, 'id'>) => {
-    const newId = `PKP-${Date.now().toString().slice(-4)}`;
-    const newPickup: MedicationPickup = { ...pickupData, id: newId };
-    setPickups(prev => [newPickup, ...prev]);
-    addAuditLog('Jadwal Ambil Obat', `Menjadwalkan ambil obat ${newPickup.patientName} tgl ${newPickup.tanggalJadwal}`);
+    const newId = `PKP-${Date.now().toString().slice(-6)}`;
+    const uid = auth.currentUser?.uid || currentUser.id;
+    const persist = async () => {
+      try {
+        await setDoc(
+          doc(db, 'medicationPickups', newId),
+          sanitizeFirestorePayload({
+            ...pickupData,
+            id: newId,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
+        void writeAuditLog('Jadwal Ambil Obat', `Menjadwalkan ambil obat ${pickupData.patientName} tgl ${pickupData.tanggalJadwal}`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `medicationPickups/${newId}`);
+      }
+    };
+    void persist();
   };
 
-  // Followup Actions
   const addFollowup = (followupData: Omit<PatientFollowup, 'id'>) => {
-    const newId = `FLP-${Date.now().toString().slice(-4)}`;
-    const newFollowup: PatientFollowup = { ...followupData, id: newId };
-    setFollowups(prev => [newFollowup, ...prev]);
-    addAuditLog('Pencatatan Follow-up Bulanan', `Follow-up pasien ${newFollowup.patientName} bulan ke-${newFollowup.bulanPengobatanKe}`);
+    const newId = `FLP-${Date.now().toString().slice(-6)}`;
+    const uid = auth.currentUser?.uid || currentUser.id;
+    const persist = async () => {
+      try {
+        await setDoc(
+          doc(db, 'patientFollowups', newId),
+          sanitizeFirestorePayload({
+            ...followupData,
+            id: newId,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
+        void writeAuditLog('Pencatatan Follow-up Bulanan', `Follow-up pasien ${followupData.patientName} bulan ke-${followupData.bulanPengobatanKe}`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `patientFollowups/${newId}`);
+      }
+    };
+    void persist();
   };
 
-  // Home Visit Actions
   const addHomeVisit = (visitData: Omit<HomeVisit, 'id'>) => {
-    const newId = `HV-${Date.now().toString().slice(-4)}`;
-    const newVisit: HomeVisit = { ...visitData, id: newId };
-    setHomeVisits(prev => [newVisit, ...prev]);
-    addAuditLog('Kunjungan Rumah Baru', `Kunjungan rumah ke ${newVisit.targetName} (${newVisit.kelurahan})`);
+    const newId = `HV-${Date.now().toString().slice(-6)}`;
+    const uid = auth.currentUser?.uid || currentUser.id;
+    const persist = async () => {
+      try {
+        await setDoc(
+          doc(db, 'homeVisits', newId),
+          sanitizeFirestorePayload({
+            ...visitData,
+            id: newId,
+            faskesCode: FASKES_CODE,
+            createdByUid: uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          })
+        );
+        void writeAuditLog('Kunjungan Rumah Baru', `Kunjungan rumah ke ${visitData.targetName} (${visitData.kelurahan})`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `homeVisits/${newId}`);
+      }
+    };
+    void persist();
   };
 
   const updateHomeVisit = (id: string, updates: Partial<HomeVisit>) => {
-    setHomeVisits(prev => prev.map(v => v.id === id ? { ...v, ...updates } : v));
-  };
-
-  // WhatsApp
-  const sendWhatsApp = (msgData: Omit<WhatsAppMessage, 'id' | 'waktuKirim'>) => {
-    const now = new Date();
-    const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
-    const newMsg: WhatsAppMessage = {
-      ...msgData,
-      id: `WA-${Date.now().toString().slice(-4)}`,
-      waktuKirim: timeStr
+    const persist = async () => {
+      try {
+        await updateDoc(
+          doc(db, 'homeVisits', id),
+          sanitizeFirestorePayload({
+            ...updates,
+            updatedAt: serverTimestamp()
+          })
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `homeVisits/${id}`);
+      }
     };
-    setWhatsappMessages(prev => [newMsg, ...prev]);
-    addAuditLog('Pesan WhatsApp Terkirim', `Kirim template ${newMsg.templateType} ke ${newMsg.receiverName} (${newMsg.noWhatsApp})`);
+    void persist();
   };
 
-  // Helpers
+  const sendWhatsApp = (msgData: Omit<WhatsAppMessage, 'id' | 'waktuKirim'>) => {
+    const newId = `WA-${Date.now().toString().slice(-6)}`;
+    const waktuKirim = formatWibTimestamp();
+    const uid = auth.currentUser?.uid || currentUser.id;
+    const persist = async () => {
+      try {
+        await setDoc(
+          doc(db, 'whatsappMessages', newId),
+          sanitizeFirestorePayload({
+            ...msgData,
+            id: newId,
+            faskesCode: FASKES_CODE,
+            waktuKirim,
+            createdByUid: uid,
+            createdAt: serverTimestamp()
+          })
+        );
+        void writeAuditLog('Pesan WhatsApp Terkirim', `Kirim template ${msgData.templateType} ke ${msgData.receiverName} (${msgData.noWhatsApp})`);
+      } catch (error) {
+        handleFirestoreError(error, OperationType.CREATE, `whatsappMessages/${newId}`);
+      }
+    };
+    void persist();
+  };
+
+  // ==================== HELPERS ====================
   const getContactsForPatient = (patientId: string) => {
-    return contacts.filter(c => c.patientId === patientId);
+    return contacts.filter((c) => c.patientId === patientId);
   };
 
   const getPatientSummary = (patientId: string) => {
     const patientContacts = getContactsForPatient(patientId);
     return {
       totalContacts: patientContacts.length,
-      screenedCount: patientContacts.filter(c => c.sudahDiskrining).length,
-      unscreenedCount: patientContacts.filter(c => !c.sudahDiskrining).length,
-      tptEligibleCount: patientContacts.filter(c => c.memenuhiKriteriaTPT).length,
-      tptStartedCount: patientContacts.filter(c => c.status === 'Sedang menjalani TPT' || c.status === 'TPT selesai').length,
-      tptCompletedCount: patientContacts.filter(c => c.status === 'TPT selesai').length,
+      screenedCount: patientContacts.filter((c) => c.sudahDiskrining).length,
+      unscreenedCount: patientContacts.filter((c) => !c.sudahDiskrining).length,
+      tptEligibleCount: patientContacts.filter((c) => c.memenuhiKriteriaTPT).length,
+      tptStartedCount: patientContacts.filter((c) => c.status === 'Sedang menjalani TPT' || c.status === 'TPT selesai').length,
+      tptCompletedCount: patientContacts.filter((c) => c.status === 'TPT selesai').length
     };
   };
 
   const toggleSitbRecordedPatient = (id: string) => {
+    const p = patients.find((item) => item.id === id);
+    if (!p) return;
+    const nextVal = !p.sitbRecorded;
     const todayStr = new Date().toISOString().slice(0, 10);
-    setPatients(prev => prev.map(p => {
-      if (p.id === id) {
-        const nextVal = !p.sitbRecorded;
-        addAuditLog(
-          'Penanda Pencatatan SITB Pasien',
-          `${p.namaLengkap} (${p.nomorRegisterSitb}) ditandai ${nextVal ? 'SUDAH dicatat di SITB' : 'BELUM dicatat di SITB'}`
-        );
-        return {
-          ...p,
-          sitbRecorded: nextVal,
-          sitbRecordedDate: nextVal ? todayStr : undefined,
-          sitbRecordedBy: nextVal ? currentUser.name : undefined,
-          updatedAt: new Date().toISOString()
-        };
-      }
-      return p;
-    }));
+    updatePatient(id, {
+      sitbRecorded: nextVal,
+      sitbRecordedDate: nextVal ? todayStr : '',
+      sitbRecordedBy: nextVal ? currentUser.name : ''
+    });
+    void writeAuditLog(
+      'Penanda Pencatatan SITB Pasien',
+      `${p.namaLengkap} (${p.nomorRegisterSitb}) ditandai ${nextVal ? 'SUDAH dicatat di SITB' : 'BELUM dicatat di SITB'}`
+    );
   };
 
   const toggleSitbRecordedContact = (id: string) => {
+    const c = contacts.find((item) => item.id === id);
+    if (!c) return;
+    const nextVal = !c.sitbRecorded;
     const todayStr = new Date().toISOString().slice(0, 10);
-    setContacts(prev => prev.map(c => {
-      if (c.id === id) {
-        const nextVal = !c.sitbRecorded;
-        addAuditLog(
-          'Penanda Pencatatan SITB Kontak/TPT',
-          `Kontak ${c.namaLengkap} (${id}) ditandai ${nextVal ? 'SUDAH dicatat di SITB' : 'BELUM dicatat di SITB'}`
-        );
-        return {
-          ...c,
-          sitbRecorded: nextVal,
-          sitbRecordedDate: nextVal ? todayStr : undefined,
-          sitbRecordedBy: nextVal ? currentUser.name : undefined,
-          updatedAt: new Date().toISOString()
-        };
-      }
-      return c;
-    }));
+    updateContact(id, {
+      sitbRecorded: nextVal,
+      sitbRecordedDate: nextVal ? todayStr : '',
+      sitbRecordedBy: nextVal ? currentUser.name : ''
+    });
+    void writeAuditLog(
+      'Penanda Pencatatan SITB Kontak/TPT',
+      `Kontak ${c.namaLengkap} (${id}) ditandai ${nextVal ? 'SUDAH dicatat di SITB' : 'BELUM dicatat di SITB'}`
+    );
   };
 
   const importSitbPatients = (payload: {
@@ -576,53 +1449,69 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     skippedCount: number;
     errorCount: number;
   }) => {
-    const nowIso = new Date().toISOString();
-    const now = new Date();
-    const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
-
-    setPatients(prev => {
-      let nextList = [...prev];
-
-      // Apply approved updates matched by existing id / nomorRegisterSitb
-      if (payload.toUpdate.length > 0) {
-        const updateMap = new Map(payload.toUpdate.map(u => [u.id, u.updates]));
-        nextList = nextList.map(p => {
-          const upd = updateMap.get(p.id);
-          return upd ? { ...p, ...upd, updatedAt: nowIso } : p;
+    const uid = auth.currentUser?.uid || currentUser.id;
+    const persist = async () => {
+      try {
+        const batch = writeBatch(db);
+        payload.toUpdate.forEach((u) => {
+          batch.update(
+            doc(db, 'indexPatients', u.id),
+            sanitizeFirestorePayload({
+              ...u.updates,
+              updatedAt: serverTimestamp()
+            })
+          );
         });
+        payload.toInsert.forEach((item, idx) => {
+          const newId = getNextSequentialId(
+            'TB-PAUH-2026-',
+            patients.map((p) => p.id),
+            idx
+          );
+          batch.set(
+            doc(db, 'indexPatients', newId),
+            sanitizeFirestorePayload({
+              ...item,
+              id: newId,
+              faskesCode: FASKES_CODE,
+              createdByUid: uid,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            })
+          );
+        });
+
+        const logId = `IMP-${Date.now().toString().slice(-6)}`;
+        batch.set(
+          doc(db, 'importLogs', logId),
+          sanitizeFirestorePayload({
+            id: logId,
+            faskesCode: FASKES_CODE,
+            timestamp: formatWibTimestamp(),
+            userName: currentUser.name,
+            userRole: currentUser.roleLabel,
+            fileName: payload.fileName,
+            totalRows: payload.totalRows,
+            insertedCount: payload.toInsert.length,
+            updatedCount: payload.toUpdate.length,
+            skippedCount: payload.skippedCount,
+            errorCount: payload.errorCount,
+            notes: `Impor SITB: ${payload.toInsert.length} baru, ${payload.toUpdate.length} diperbarui, ${payload.skippedCount} dilewati, ${payload.errorCount} error`,
+            createdByUid: uid,
+            createdAt: serverTimestamp()
+          })
+        );
+
+        await batch.commit();
+        void writeAuditLog(
+          'Impor Data SITB',
+          `Mengimpor file "${payload.fileName}": ${payload.toInsert.length} pasien baru, ${payload.toUpdate.length} diperbarui, ${payload.skippedCount} dilewati, ${payload.errorCount} error.`
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'indexPatients_importSitb');
       }
-
-      // Insert new patients with sequential IDs
-      const startNum = nextList.length + 1;
-      const inserted: IndexPatient[] = payload.toInsert.map((item, idx) => ({
-        ...item,
-        id: `TB-PAUH-2026-${String(startNum + idx).padStart(3, '0')}`,
-        createdAt: nowIso,
-        updatedAt: nowIso
-      }));
-
-      return [...inserted, ...nextList];
-    });
-
-    const newImportLog: ImportLog = {
-      id: `IMP-${Date.now().toString().slice(-6)}`,
-      timestamp: timeStr,
-      userName: currentUser.name,
-      userRole: currentUser.roleLabel,
-      fileName: payload.fileName,
-      totalRows: payload.totalRows,
-      insertedCount: payload.toInsert.length,
-      updatedCount: payload.toUpdate.length,
-      skippedCount: payload.skippedCount,
-      errorCount: payload.errorCount,
-      notes: `Impor SITB: ${payload.toInsert.length} baru, ${payload.toUpdate.length} diperbarui, ${payload.skippedCount} dilewati, ${payload.errorCount} error`
     };
-
-    setImportLogs(prev => [newImportLog, ...prev]);
-    addAuditLog(
-      'Impor Data SITB',
-      `Mengimpor file "${payload.fileName}": ${payload.toInsert.length} pasien baru, ${payload.toUpdate.length} diperbarui, ${payload.skippedCount} dilewati, ${payload.errorCount} error.`
-    );
+    void persist();
   };
 
   const linkContactToPatient = (
@@ -630,37 +1519,31 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     patientId: string,
     hubungan?: CloseContact['hubunganDenganPasien']
   ) => {
-    const targetPatient = patients.find(p => p.id === patientId);
-    if (!targetPatient) return;
+    const targetPatient = patients.find((p) => p.id === patientId);
+    const c = contacts.find((item) => item.id === contactId);
+    if (!targetPatient || !c) return;
 
-    const nowIso = new Date().toISOString();
-    setContacts(prev => prev.map(c => {
-      if (c.id === contactId) {
-        let nextStatus: ContactStatus = c.status;
-        if (c.status === 'Pasien indeks belum terhubung') {
-          if (c.legacyTptStatus === 'TPT selesai' || c.statusAkhirTPT === 'Selesai Sesuai Jadwal') {
-            nextStatus = 'TPT selesai';
-          } else if (c.legacyTptStatus === 'Sedang menjalani TPT' || c.tanggalMulaiTPT) {
-            nextStatus = 'Sedang menjalani TPT';
-          } else if (c.sudahDiskrining) {
-            nextStatus = 'Sudah diskrining';
-          } else {
-            nextStatus = 'Belum diskrining';
-          }
-        }
-        return {
-          ...c,
-          patientId: targetPatient.id,
-          patientName: targetPatient.namaLengkap,
-          hubunganDenganPasien: hubungan || c.hubunganDenganPasien,
-          status: nextStatus,
-          updatedAt: nowIso
-        };
+    let nextStatus: ContactStatus = c.status;
+    if (c.status === 'Pasien indeks belum terhubung') {
+      if (c.legacyTptStatus === 'TPT selesai' || c.statusAkhirTPT === 'Selesai Sesuai Jadwal') {
+        nextStatus = 'TPT selesai';
+      } else if (c.legacyTptStatus === 'Sedang menjalani TPT' || c.tanggalMulaiTPT) {
+        nextStatus = 'Sedang menjalani TPT';
+      } else if (c.sudahDiskrining) {
+        nextStatus = 'Sudah diskrining';
+      } else {
+        nextStatus = 'Belum diskrining';
       }
-      return c;
-    }));
+    }
 
-    addAuditLog(
+    updateContact(contactId, {
+      patientId: targetPatient.id,
+      patientName: targetPatient.namaLengkap,
+      hubunganDenganPasien: hubungan || c.hubunganDenganPasien,
+      status: nextStatus
+    });
+
+    void writeAuditLog(
       'Hubungkan Pasien Indeks',
       `Menghubungkan kontak/TPT ${contactId} ke pasien indeks ${targetPatient.namaLengkap} (${targetPatient.id}).`
     );
@@ -673,41 +1556,62 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     skippedCount: number;
     errorCount: number;
   }) => {
-    const nowIso = new Date().toISOString();
-    const now = new Date();
-    const timeStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')} WIB`;
+    const uid = auth.currentUser?.uid || currentUser.id;
+    const persist = async () => {
+      try {
+        const batch = writeBatch(db);
+        payload.toInsert.forEach((item, idx) => {
+          const newId = getNextSequentialId(
+            'KE-PAUH-2026-',
+            contacts.map((c) => c.id),
+            idx
+          );
+          batch.set(
+            doc(db, 'closeContacts', newId),
+            sanitizeFirestorePayload({
+              ...item,
+              id: newId,
+              faskesCode: FASKES_CODE,
+              sumberData: item.sumberData || 'impor_data_lama',
+              memenuhiKriteriaTPT: false,
+              createdByUid: uid,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            })
+          );
+        });
 
-    setContacts(prev => {
-      const startNum = prev.length + 1;
-      const inserted: CloseContact[] = payload.toInsert.map((item, idx) => ({
-        ...item,
-        id: `KE-PAUH-2026-${String(startNum + idx).padStart(3, '0')}`,
-        sumberData: item.sumberData || 'impor_data_lama',
-        createdAt: nowIso,
-        updatedAt: nowIso
-      }));
-      return [...inserted, ...prev];
-    });
+        const logId = `IMP-${Date.now().toString().slice(-6)}`;
+        batch.set(
+          doc(db, 'importLogs', logId),
+          sanitizeFirestorePayload({
+            id: logId,
+            faskesCode: FASKES_CODE,
+            timestamp: formatWibTimestamp(),
+            userName: currentUser.name,
+            userRole: currentUser.roleLabel,
+            fileName: payload.fileName,
+            totalRows: payload.totalRows,
+            insertedCount: payload.toInsert.length,
+            updatedCount: 0,
+            skippedCount: payload.skippedCount,
+            errorCount: payload.errorCount,
+            notes: `Impor Data TPT Lama/Kontak: ${payload.toInsert.length} baris masuk, ${payload.skippedCount} dilewati, ${payload.errorCount} error`,
+            createdByUid: uid,
+            createdAt: serverTimestamp()
+          })
+        );
 
-    const newImportLog: ImportLog = {
-      id: `IMP-${Date.now().toString().slice(-6)}`,
-      timestamp: timeStr,
-      userName: currentUser.name,
-      userRole: currentUser.roleLabel,
-      fileName: payload.fileName,
-      totalRows: payload.totalRows,
-      insertedCount: payload.toInsert.length,
-      updatedCount: 0,
-      skippedCount: payload.skippedCount,
-      errorCount: payload.errorCount,
-      notes: `Impor Data TPT Lama/Kontak: ${payload.toInsert.length} baris masuk, ${payload.skippedCount} dilewati, ${payload.errorCount} error`
+        await batch.commit();
+        void writeAuditLog(
+          'Impor Data TPT Lama / Kontak',
+          `Mengimpor "${payload.fileName}": ${payload.toInsert.length} data masuk, ${payload.skippedCount} dilewati, ${payload.errorCount} error.`
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, 'closeContacts_importLegacy');
+      }
     };
-
-    setImportLogs(prev => [newImportLog, ...prev]);
-    addAuditLog(
-      'Impor Data TPT Lama / Kontak',
-      `Mengimpor "${payload.fileName}": ${payload.toInsert.length} data masuk, ${payload.skippedCount} dilewati, ${payload.errorCount} error.`
-    );
+    void persist();
   };
 
   const mergeDuplicateContacts = (
@@ -715,84 +1619,101 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
     removeId: string,
     mergedFields: Partial<CloseContact>
   ) => {
-    const nowIso = new Date().toISOString();
-    const kept = contacts.find(c => c.id === keepId);
-    const removed = contacts.find(c => c.id === removeId);
+    const kept = contacts.find((c) => c.id === keepId);
+    const removed = contacts.find((c) => c.id === removeId);
+    const persist = async () => {
+      try {
+        const batch = writeBatch(db);
+        batch.update(
+          doc(db, 'closeContacts', keepId),
+          sanitizeFirestorePayload({
+            ...mergedFields,
+            updatedAt: serverTimestamp()
+          })
+        );
+        batch.delete(doc(db, 'closeContacts', removeId));
+        await batch.commit();
 
-    setContacts(prev =>
-      prev
-        .filter(c => c.id !== removeId)
-        .map(c => (c.id === keepId ? { ...c, ...mergedFields, updatedAt: nowIso } : c))
-    );
-
-    addAuditLog(
-      'Gabung Data Kontak Ganda',
-      `Menggabungkan data duplikat "${removed?.namaLengkap || removeId}" (${removeId}) ke "${kept?.namaLengkap || keepId}" (${keepId}).`
-    );
+        void writeAuditLog(
+          'Gabung Data Kontak Ganda',
+          `Menggabungkan data duplikat "${removed?.namaLengkap || removeId}" (${removeId}) ke "${kept?.namaLengkap || keepId}" (${keepId}).`
+        );
+      } catch (error) {
+        handleFirestoreError(error, OperationType.WRITE, `closeContacts_merge_${keepId}_${removeId}`);
+      }
+    };
+    void persist();
   };
 
-  const resetAllData = () => {
-    setPatients(INITIAL_PATIENTS);
-    setContacts(INITIAL_CONTACTS);
-    setPickups(INITIAL_PICKUPS);
-    setFollowups(INITIAL_FOLLOWUPS);
-    setHomeVisits(INITIAL_HOME_VISITS);
-    setWhatsappMessages(INITIAL_WA_MESSAGES);
-    setAuditLogs(INITIAL_AUDIT_LOGS);
-    setImportLogs(INITIAL_IMPORT_LOGS);
-    localStorage.clear();
-    addAuditLog('Reset Data Demo', 'Data sistem dikembalikan ke pengaturan awal UPTD Puskesmas Pauh');
+  const resetAllData = async () => {
+    if (!auth.currentUser) return;
+    await seedDummyDataToFirestore(auth.currentUser.uid, currentUser.name, currentUser.roleLabel);
   };
 
   return (
-    <DataContext.Provider value={{
-      activeTab,
-      setActiveTab,
-      isAuthenticated,
-      login,
-      logout,
-      currentUser,
-      setCurrentUser,
-      switchRole,
-      users,
-      patients,
-      contacts,
-      pickups,
-      followups,
-      homeVisits,
-      whatsappMessages,
-      auditLogs,
-      importLogs,
-      addPatient,
-      updatePatient,
-      deletePatient,
-      toggleSitbRecordedPatient,
-      toggleSitbRecordedContact,
-      importSitbPatients,
-      addContact,
-      updateContact,
-      deleteContact,
-      linkContactToPatient,
-      importLegacyContacts,
-      mergeDuplicateContacts,
-      saveScreening,
-      saveTptDecision,
-      recordPickup,
-      addPickup,
-      addFollowup,
-      addHomeVisit,
-      updateHomeVisit,
-      sendWhatsApp,
-      getContactsForPatient,
-      getPatientSummary,
-      resetAllData,
-      selectedPatientId,
-      setSelectedPatientId,
-      selectedContactId,
-      setSelectedContactId,
-      searchQuery,
-      setSearchQuery
-    }}>
+    <DataContext.Provider
+      value={{
+        activeTab,
+        setActiveTab,
+        authLoading,
+        isAuthenticated,
+        authError,
+        clearAuthError: () => setAuthError(null),
+        unverifiedUserEmail,
+        sessionTimeoutNotice,
+        mustChangePassword,
+        loginWithEmail,
+        loginWithGoogle,
+        resendVerificationEmail,
+        refreshEmailVerification,
+        changeOwnPassword,
+        createStaffAccount,
+        updateStaffAccount,
+        logout,
+        currentUser,
+        users,
+        patients,
+        contacts,
+        pickups,
+        followups,
+        homeVisits,
+        whatsappMessages,
+        auditLogs,
+        importLogs,
+        systemSettings,
+        saveSystemSettings,
+        isSeedingData,
+        addPatient,
+        updatePatient,
+        deletePatient,
+        toggleSitbRecordedPatient,
+        toggleSitbRecordedContact,
+        importSitbPatients,
+        addContact,
+        updateContact,
+        deleteContact,
+        linkContactToPatient,
+        importLegacyContacts,
+        mergeDuplicateContacts,
+        saveScreening,
+        saveTptDecision,
+        recordPickup,
+        addPickup,
+        addFollowup,
+        addHomeVisit,
+        updateHomeVisit,
+        sendWhatsApp,
+        getContactsForPatient,
+        getPatientSummary,
+        resetAllData,
+        selectedPatientId,
+        setSelectedPatientId,
+        selectedContactId,
+        setSelectedContactId,
+        searchQuery,
+        setSearchQuery
+      }}
+    >
       {children}
     </DataContext.Provider>
   );

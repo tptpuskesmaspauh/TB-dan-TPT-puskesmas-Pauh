@@ -13,7 +13,6 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { useData } from '../../context/DataContext';
-import { RoleType } from '../../types/tb';
 
 interface HeaderProps {
   setMobileOpen: (open: boolean) => void;
@@ -23,8 +22,6 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ setMobileOpen, onOpenAddPatient }) => {
   const { 
     currentUser, 
-    switchRole, 
-    users, 
     searchQuery, 
     setSearchQuery, 
     resetAllData,
@@ -44,6 +41,7 @@ export const Header: React.FC<HeaderProps> = ({ setMobileOpen, onOpenAddPatient 
   const eligibleNotStarted = contacts.filter(c => c.status === 'TPT belum dimulai');
 
   const totalAlerts = overduePickups.length + unscreenedContacts.length + pendingTptDecision.length + eligibleNotStarted.length;
+  const isAdmin = currentUser.role === 'super_admin' || currentUser.role === 'admin_puskesmas';
 
   return (
     <header className="sticky top-0 z-30 bg-[#FAEEE0] border-b border-[#FBE6C9] px-4 lg:px-8 py-3 flex items-center justify-between gap-4 shadow-xs">
@@ -80,13 +78,15 @@ export const Header: React.FC<HeaderProps> = ({ setMobileOpen, onOpenAddPatient 
       {/* Right Actions */}
       <div className="flex items-center gap-2 lg:gap-3 shrink-0">
         {/* Quick Add Patient Button */}
-        <button
-          onClick={onOpenAddPatient}
-          className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#CE5924] hover:bg-[#D77252] text-white text-xs font-bold shadow-sm transition-all transform active:scale-95 cursor-pointer"
-        >
-          <Plus className="w-4 h-4" />
-          <span>Tambah Pasien TB</span>
-        </button>
+        {currentUser.role !== 'nakes' && (
+          <button
+            onClick={onOpenAddPatient}
+            className="hidden sm:flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#CE5924] hover:bg-[#D77252] text-white text-xs font-bold shadow-sm transition-all transform active:scale-95 cursor-pointer"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Tambah Pasien TB</span>
+          </button>
+        )}
 
         {/* Live Notification Bell */}
         <div className="relative">
@@ -176,20 +176,22 @@ export const Header: React.FC<HeaderProps> = ({ setMobileOpen, onOpenAddPatient 
           )}
         </div>
 
-        {/* Reset Demo Data */}
-        <button
-          onClick={() => {
-            if (confirm('Kembalikan data ke awal simulasi UPTD Puskesmas Pauh?')) {
-              resetAllData();
-            }
-          }}
-          className="hidden md:flex items-center gap-1 p-2 rounded-xl bg-white border border-[#FBE6C9] text-slate-600 hover:text-[#1C5456] hover:bg-[#FDF5EB] cursor-pointer"
-          title="Reset Data Simulasi"
-        >
-          <RotateCcw className="w-4 h-4" />
-        </button>
+        {/* Seed/Reset Demo Data (Admin Only) */}
+        {isAdmin && (
+          <button
+            onClick={() => {
+              if (confirm('Muat ulang data simulasi awal ke Cloud Firestore UPTD Puskesmas Pauh?')) {
+                void resetAllData();
+              }
+            }}
+            className="hidden md:flex items-center gap-1 p-2 rounded-xl bg-white border border-[#FBE6C9] text-slate-600 hover:text-[#1C5456] hover:bg-[#FDF5EB] cursor-pointer"
+            title="Muat Ulang Data Contoh Firestore"
+          >
+            <RotateCcw className="w-4 h-4" />
+          </button>
+        )}
 
-        {/* Role Switcher (RBAC) */}
+        {/* Authenticated Profile Menu */}
         <div className="relative">
           <button
             onClick={() => setRoleMenuOpen(!roleMenuOpen)}
@@ -199,46 +201,37 @@ export const Header: React.FC<HeaderProps> = ({ setMobileOpen, onOpenAddPatient 
               {currentUser.name.charAt(0)}
             </div>
             <div className="text-left hidden sm:block">
-              <p className="text-xs font-bold text-[#1C5456] leading-tight truncate max-w-[120px]">{currentUser.name}</p>
-              <p className="text-[10px] text-[#35907D] font-medium leading-tight truncate max-w-[120px]">{currentUser.roleLabel}</p>
+              <p className="text-xs font-bold text-[#1C5456] leading-tight truncate max-w-[130px]">{currentUser.name}</p>
+              <p className="text-[10px] text-[#35907D] font-medium leading-tight truncate max-w-[130px]">{currentUser.roleLabel}</p>
             </div>
             <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
           </button>
 
           {roleMenuOpen && (
-            <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-[#FBE6C9] p-2 z-50">
-              <div className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-100">
-                Pilih Hak Akses Pengguna (RBAC):
-              </div>
-              <div className="mt-1 space-y-1">
-                {users.map(u => (
-                  <button
-                    key={u.id}
-                    onClick={() => {
-                      switchRole(u.role);
-                      setRoleMenuOpen(false);
-                    }}
-                    className={`
-                      w-full text-left p-2 rounded-xl text-xs transition-colors flex items-center justify-between cursor-pointer
-                      ${currentUser.id === u.id ? 'bg-[#35907D]/10 text-[#1C5456] font-bold' : 'text-slate-700 hover:bg-slate-50'}
-                    `}
-                  >
-                    <div>
-                      <p className="font-semibold">{u.name}</p>
-                      <p className="text-[10px] text-slate-500">{u.roleLabel}</p>
-                    </div>
-                    {currentUser.id === u.id && <CheckCircle2 className="w-4 h-4 text-[#35907D]" />}
-                  </button>
-                ))}
+            <div className="absolute right-0 mt-2 w-68 bg-white rounded-2xl shadow-xl border border-[#FBE6C9] p-3 z-50 space-y-2 text-xs">
+              <div className="pb-2 border-b border-slate-100">
+                <p className="font-bold text-[#1C5456]">{currentUser.name}</p>
+                <p className="text-[11px] text-[#35907D] font-semibold">{currentUser.roleLabel}</p>
+                <p className="text-[10px] text-slate-500 mt-0.5">{currentUser.email}</p>
               </div>
 
-              <div className="pt-2 mt-2 border-t border-slate-100">
+              <button
+                onClick={() => {
+                  setActiveTab('users');
+                  setRoleMenuOpen(false);
+                }}
+                className="w-full text-left p-2 rounded-xl text-slate-700 hover:bg-[#FDF5EB] font-semibold transition-colors cursor-pointer"
+              >
+                Kelola Profil & Kata Sandi →
+              </button>
+
+              <div className="pt-2 border-t border-slate-100">
                 <button
                   onClick={() => {
                     setRoleMenuOpen(false);
-                    logout();
+                    void logout();
                   }}
-                  className="w-full text-left p-2 rounded-xl text-xs text-red-600 hover:bg-red-50 font-bold transition-colors cursor-pointer flex items-center justify-between"
+                  className="w-full text-left p-2 rounded-xl text-red-600 hover:bg-red-50 font-bold transition-colors cursor-pointer flex items-center justify-between"
                 >
                   <span>Keluar dari Akun (Logout)</span>
                   <span>→</span>

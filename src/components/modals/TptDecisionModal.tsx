@@ -41,8 +41,11 @@ export const TptDecisionModal: React.FC<TptDecisionModalProps> = ({ contactId, o
 
   if (!contactId || !contact) return null;
 
+  const canDecideTpt = currentUser.role === 'nakes' || currentUser.role === 'super_admin';
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canDecideTpt) return;
     const isEligible = keputusan === 'Layak Diberikan TPT';
 
     saveTptDecision(contactId, {
@@ -224,6 +227,15 @@ export const TptDecisionModal: React.FC<TptDecisionModalProps> = ({ contactId, o
             />
           </div>
 
+          {!canDecideTpt && (
+            <div className="p-3.5 rounded-2xl bg-red-50 border border-red-200 text-red-800 flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-[#CE5924] shrink-0 mt-0.5" />
+              <p className="text-[11px] leading-relaxed">
+                <strong>Akses Dibatasi:</strong> Peran Anda saat ini (<strong>{currentUser.roleLabel}</strong>) tidak memiliki kewenangan medis untuk menetapkan kelayakan TPT. Hanya <strong>Tenaga Kesehatan / Dokter</strong> atau <strong>Super Admin</strong> yang dapat menyimpan keputusan ini.
+              </p>
+            </div>
+          )}
+
           {/* Footer Submit */}
           <div className="pt-3 border-t border-slate-200 flex items-center justify-between">
             <span className="text-[11px] text-slate-500">
@@ -239,7 +251,8 @@ export const TptDecisionModal: React.FC<TptDecisionModalProps> = ({ contactId, o
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 rounded-xl bg-[#35907D] hover:bg-[#1C5456] text-white font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+                disabled={!canDecideTpt}
+                className="px-5 py-2 rounded-xl bg-[#35907D] hover:bg-[#1C5456] text-white font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 <Save className="w-4 h-4" />
                 <span>Simpan Keputusan Medis</span>

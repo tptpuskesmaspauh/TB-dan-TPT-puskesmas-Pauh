@@ -27,12 +27,111 @@ import { ScreeningModal } from './components/modals/ScreeningModal';
 import { TptDecisionModal } from './components/modals/TptDecisionModal';
 import { QuickTaskModal } from './components/modals/QuickTaskModal';
 import { LoginView } from './components/auth/LoginView';
+import { ErrorBoundary } from './components/common/ErrorBoundary';
 
-import { Sparkles, CheckSquare, Bell } from 'lucide-react';
+import { Sparkles, CheckSquare, Bell, KeyRound, Loader2 } from 'lucide-react';
+
+const ForceChangePasswordModal: React.FC = () => {
+  const { changeOwnPassword, currentUser, logout } = useData();
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+  const [err, setErr] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr('');
+    if (newPass.length < 8) {
+      setErr('Kata sandi baru minimal 8 karakter.');
+      return;
+    }
+    if (newPass !== confirmPass) {
+      setErr('Konfirmasi kata sandi tidak cocok.');
+      return;
+    }
+    setSaving(true);
+    try {
+      await changeOwnPassword(newPass);
+    } catch (error) {
+      setErr(error instanceof Error ? error.message : 'Gagal memperbarui kata sandi.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-xs">
+      <div className="w-full max-w-md bg-white rounded-3xl border-2 border-[#FBE6C9] shadow-2xl p-6 space-y-4 text-xs">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-2xl bg-[#F9D059] text-[#193F35] flex items-center justify-center shrink-0">
+            <KeyRound className="w-6 h-6" />
+          </div>
+          <div>
+            <h3 className="font-heading font-black text-base text-[#1C5456]">
+              Wajib Ganti Kata Sandi Sementara
+            </h3>
+            <p className="text-[11px] text-slate-500">
+              Akun baru ({currentUser.email}) wajib mengganti kata sandi sebelum mengakses data pasien.
+            </p>
+          </div>
+        </div>
+
+        {err && (
+          <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 font-medium">
+            {err}
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-3">
+          <div>
+            <label className="block font-bold text-slate-700 mb-1">Kata Sandi Baru (min. 8 karakter):</label>
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={newPass}
+              onChange={(e) => setNewPass(e.target.value)}
+              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#35907D]"
+            />
+          </div>
+          <div>
+            <label className="block font-bold text-slate-700 mb-1">Ulangi Kata Sandi Baru:</label>
+            <input
+              type="password"
+              required
+              minLength={8}
+              value={confirmPass}
+              onChange={(e) => setConfirmPass(e.target.value)}
+              className="w-full p-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#35907D]"
+            />
+          </div>
+          <div className="flex items-center gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50 cursor-pointer"
+            >
+              Keluar
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex-1 py-2.5 rounded-xl bg-[#1C5456] hover:bg-[#35907D] text-white font-bold cursor-pointer disabled:opacity-60"
+            >
+              {saving ? 'Menyimpan...' : 'Simpan Kata Sandi Baru'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
 
 const AppContent: React.FC = () => {
   const { 
+    authLoading,
     isAuthenticated,
+    mustChangePassword,
     activeTab, 
     selectedPatientId, 
     setSelectedPatientId, 
@@ -50,9 +149,31 @@ const AppContent: React.FC = () => {
   const [showTptModal, setShowTptModal] = useState(false);
   const [showTaskModal, setShowTaskModal] = useState(false);
 
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#FDF5EB] flex flex-col items-center justify-center p-6 text-[#193F35]">
+        <div className="w-24 h-24 rounded-3xl overflow-hidden border-4 border-[#F9D059] bg-white p-1 shadow-xl mb-4">
+          <img
+            src="/assets/aistudio/d794295c-1550-4dd4-a5c0-0c23c3ce3a7b_b675b9b1.jpeg"
+            alt="TEMAN TPT"
+            className="w-full h-full object-contain"
+          />
+        </div>
+        <div className="flex items-center gap-2 text-sm font-bold text-[#1C5456]">
+          <Loader2 className="w-4 h-4 animate-spin text-[#35907D]" />
+          <span>Memverifikasi sesi Firebase TEMAN TPT...</span>
+        </div>
+      </div>
+    );
+  }
+
   // If not logged in, show warm friendly login screen with official mascot
   if (!isAuthenticated) {
     return <LoginView />;
+  }
+
+  if (mustChangePassword) {
+    return <ForceChangePasswordModal />;
   }
 
   // Urgent count for floating badge
@@ -241,8 +362,10 @@ const AppContent: React.FC = () => {
 
 export default function App() {
   return (
-    <DataProvider>
-      <AppContent />
-    </DataProvider>
+    <ErrorBoundary>
+      <DataProvider>
+        <AppContent />
+      </DataProvider>
+    </ErrorBoundary>
   );
 }

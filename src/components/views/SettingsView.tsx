@@ -13,25 +13,35 @@ import {
 import { useData } from '../../context/DataContext';
 
 export const SettingsView: React.FC = () => {
-  const { resetAllData } = useData();
+  const { resetAllData, systemSettings, saveSystemSettings, currentUser, isSeedingData } = useData();
+  const isAdmin = currentUser.role === 'super_admin' || currentUser.role === 'admin_puskesmas';
 
-  const [namaFaskes, setNamaFaskes] = useState('UPTD Puskesmas Pauh');
-  const [kodeFaskes, setKodeFaskes] = useState('P137107');
-  const [alamat, setAlamat] = useState('Jl. Dr. Moh. Hatta No. 1, Pauh, Kota Padang, Sumatera Barat');
-  const [noTelp, setNoTelp] = useState('(0751) 71234');
-  const [email, setEmail] = useState('puskesmaspauh@padang.go.id');
+  const [namaFaskes, setNamaFaskes] = useState(systemSettings.namaFaskes);
+  const [kodeFaskes, setKodeFaskes] = useState(systemSettings.faskesCode);
+  const [alamat, setAlamat] = useState(systemSettings.alamat);
+  const [noTelp, setNoTelp] = useState(systemSettings.noTelp);
+  const [email, setEmail] = useState(systemSettings.email);
 
-  // WhatsApp API Configuration state (Official Architecture ready)
-  const [waPhoneNumberId, setWaPhoneNumberId] = useState('109823471829302');
-  const [waBusinessAccountId, setWaBusinessAccountId] = useState('98172381293812');
-  const [waApiKeyPlaceholder, setWaApiKeyPlaceholder] = useState('••••••••••••••••••••••••••••••••');
-  const [autoReminderHMinus1, setAutoReminderHMinus1] = useState(true);
-  const [autoReminderOverdue, setAutoReminderOverdue] = useState(true);
+  const [waPhoneNumberId, setWaPhoneNumberId] = useState(systemSettings.waPhoneNumberId);
+  const [waBusinessAccountId, setWaBusinessAccountId] = useState(systemSettings.waBusinessAccountId);
+  const [autoReminderHMinus1, setAutoReminderHMinus1] = useState(systemSettings.autoReminderHMinus1);
+  const [autoReminderOverdue, setAutoReminderOverdue] = useState(systemSettings.autoReminderOverdue);
 
   const [savedAlert, setSavedAlert] = useState(false);
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
+    await saveSystemSettings({
+      namaFaskes,
+      alamat,
+      noTelp,
+      email,
+      waPhoneNumberId,
+      waBusinessAccountId,
+      autoReminderHMinus1,
+      autoReminderOverdue
+    });
     setSavedAlert(true);
     setTimeout(() => setSavedAlert(false), 3000);
   };
@@ -43,14 +53,14 @@ export const SettingsView: React.FC = () => {
         <div>
           <h2 className="font-heading font-black text-xl text-[#1C5456]">Pengaturan Sistem TEMAN TPT</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Konfigurasi profil instansi kesehatan, integrasi WhatsApp Business Cloud API resmi, dan parameter pengingat.
+            Konfigurasi profil instansi kesehatan, integrasi WhatsApp Business Cloud API resmi, dan parameter pengingat di Cloud Firestore.
           </p>
         </div>
 
         {savedAlert && (
           <span className="text-xs bg-emerald-100 text-emerald-800 px-3 py-1.5 rounded-xl font-bold flex items-center gap-1.5 animate-in fade-in">
             <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-            Pengaturan Berhasil Disimpan!
+            Pengaturan Tersimpan ke Firestore!
           </span>
         )}
       </div>
@@ -185,33 +195,41 @@ export const SettingsView: React.FC = () => {
         </div>
 
         {/* Section 3: Reset Demo Data */}
-        <div className="p-6 rounded-3xl bg-white border border-[#FBE6C9] shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-          <div>
-            <h4 className="font-heading font-bold text-sm text-[#1C5456]">Kembalikan Data Simulasi Awal</h4>
-            <p className="text-slate-500 mt-0.5">
-              Reset database dummy lokal kembali ke data contoh 8 pasien TB dan 22 kontak erat Puskesmas Pauh.
-            </p>
+        {isAdmin && (
+          <div className="p-6 rounded-3xl bg-white border border-[#FBE6C9] shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div>
+              <h4 className="font-heading font-bold text-sm text-[#1C5456]">Muat / Reset Data Simulasi Awal Firestore</h4>
+              <p className="text-slate-500 mt-0.5">
+                Mengisi ulang koleksi contoh 8 pasien TB dan 19 kontak erat/TPT lama ke Cloud Firestore Puskesmas Pauh.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={isSeedingData}
+              onClick={() => {
+                if (confirm('Yakin ingin memuat ulang data contoh simulasi ke Cloud Firestore?')) {
+                  void resetAllData();
+                }
+              }}
+              className="px-4 py-2 rounded-xl border border-red-300 text-red-600 hover:bg-red-50 font-bold transition-all flex items-center gap-1.5 cursor-pointer shrink-0 disabled:opacity-60"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>{isSeedingData ? 'Memuat Data...' : 'Muat Ulang Data Contoh'}</span>
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              if (confirm('Yakin ingin mereset seluruh data simulasi ke setelan awal?')) {
-                resetAllData();
-                alert('Data berhasil direset ke kondisi awal!');
-              }
-            }}
-            className="px-4 py-2 rounded-xl border border-red-300 text-red-600 hover:bg-red-50 font-bold transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
-          >
-            <RotateCcw className="w-4 h-4" />
-            <span>Reset Data Demo</span>
-          </button>
-        </div>
+        )}
 
         {/* Submit */}
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-between">
+          {!isAdmin && (
+            <span className="text-[11px] text-amber-700 font-semibold">
+              Hanya Admin Puskesmas atau Super Admin yang dapat menyimpan perubahan pengaturan.
+            </span>
+          )}
           <button
             type="submit"
-            className="px-6 py-2.5 rounded-xl bg-[#35907D] hover:bg-[#1C5456] text-white font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer"
+            disabled={!isAdmin}
+            className="ml-auto px-6 py-2.5 rounded-xl bg-[#35907D] hover:bg-[#1C5456] text-white font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
           >
             <Save className="w-4 h-4" />
             <span>Simpan Semua Pengaturan</span>

@@ -13,6 +13,9 @@ export interface UserAccount {
   avatar: string;
   nip?: string;
   phone: string;
+  isActive?: boolean;
+  mustChangePassword?: boolean;
+  faskesCode?: string;
 }
 
 export type Gender = 'L' | 'P';
